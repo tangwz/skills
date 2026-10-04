@@ -1,0 +1,111 @@
+{
+  "skill_name": "remotion-knowledge-video",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "为频道制作一段 18 秒、60 fps 的横屏知识视频，解释 RAG 如何把检索结果提供给语言模型。延续深色图解、缓慢移动网格和语义色风格，安排内容开场、几段正文图解和知识总结；转场时背景要接得自然，最后 1.5 秒整个画面停住，让观众读完结论。请交付场景计划、可编辑的共用视觉代码和能运行的时序、布局检查。下一期可能改为 30 fps，请把帧率留作共用配置，调整后总时长和动效节奏应保持一致。频道名、Logo 和片尾话术还没确定，正式配置先留空；之后加频道标记时，长标题与标记之间留些间距，图解也不要被遮住，没有标记时也别空出一块。不要改已有视频，不需要编码完整视频。",
+      "expected_output": "可编辑的 18 秒新片，包含内容开场、多场景图解与总结；共用帧率可调整，跨场景背景连续，末尾整个画面稳定，有无频道标记时布局均可用。提供与实际渲染逻辑相连的可运行检查，正式频道身份保持空值。",
+      "files": [],
+      "expectations": [
+        "The delivered production Composition initially uses the requested 60 fps.",
+        "Changing the shared fps setting changes the fps of the registered Composition without editing scene code.",
+        "The registered video lasts 18 seconds within one frame at both 30 fps and 60 fps.",
+        "The actual scene timeline covers every integer frame of the registered video.",
+        "Any overlapping scene intervals correspond to explicit planned transitions.",
+        "Animation milestones occur at the same elapsed times, within one frame, when the configured fps changes between 30 and 60.",
+        "Background displacement follows one uninterrupted Composition-time trajectory across every scene boundary.",
+        "The moving background has an identical rendered state at every frame in the final 1.5-second hold.",
+        "The ending foreground has an identical rendered state at every frame in the final 1.5-second hold.",
+        "With a configured channel mark, the actual long title is separated from the mark's occupied bounds by positive layout spacing.",
+        "With a configured channel mark, the actual body diagram stays outside the mark's occupied bounds.",
+        "With no channel mark, the actual body layout has no unused region solely reserved for an absent mark.",
+        "The production channel name remains unconfigured.",
+        "The production channel logo remains unconfigured.",
+        "The production end note remains unconfigured.",
+        "The content diagram shows retrieved information entering the model context before answer generation."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "请检查附件 legacy-clip 项目，给这段系列中间的机制讲解做视觉适配方案。它已有 22 秒、30 fps 的时间轴，频道确认使用近黑网格和语义色，但旧组件还在引用另一套背景。只整理背景和语义色的接线，保持现有场景结构、讲解内容和播放时序；不要增加片头片尾或结尾冻结。沿用项目的本地字体 loader，讲解字幕继续隐藏，已有文本、时间轴和 SRT 都要保留。频道 Logo 还没定，项目里的产品 Logo 只是讲解素材。请根据附件中的实际文件给出最小接入片段或伪差异，以及复查方法；本次只交付方案，不修改附件项目。若更大的结构调整有价值，可以另列建议，但不要放进本次改动。",
+      "expected_output": "以冻结输入项目的实际接口为依据的方案与最小片段；在原场景结构内解决背景来源冲突，复用本地字体，保留 30 fps、660 帧和全部讲解边界。字幕及其资产不变，产品 Logo 不被当作频道身份；本次接入方案不包含时间轴或布局迁移，更大的结构调整可作为独立的可选建议列出。",
+      "files": [
+        "evals/fixtures/legacy-clip/README.md",
+        "evals/fixtures/legacy-clip/public/fonts/INTER-OFL.txt",
+        "evals/fixtures/legacy-clip/public/fonts/inter-latin-500-normal.woff2",
+        "evals/fixtures/legacy-clip/public/narration.srt",
+        "evals/fixtures/legacy-clip/src/LegacyBackdrop.tsx",
+        "evals/fixtures/legacy-clip/src/MechanismSection.tsx",
+        "evals/fixtures/legacy-clip/src/clip-settings.ts",
+        "evals/fixtures/legacy-clip/src/index.tsx",
+        "evals/fixtures/legacy-clip/src/narration.ts",
+        "evals/fixtures/legacy-clip/src/theme.ts",
+        "evals/fixtures/legacy-clip/src/useClipFont.ts",
+        "evals/fixtures/legacy-clip/tsconfig.json"
+      ],
+      "expectations": [
+        "The proposed target Composition retains its existing 30 fps setting.",
+        "The proposed target Composition retains its existing 660-frame duration.",
+        "Every existing narration scene retains its original start and end frames in the proposed adaptation.",
+        "The minimal wiring changes make the target use the confirmed near-black grid source instead of the legacy background source.",
+        "The proposed text components continue to use the fixture's existing local font loader.",
+        "Narration captions remain hidden under the fixture's actual caption control.",
+        "The plan preserves the existing caption text, caption timing data, and SRT assets unchanged.",
+        "The product logo remains a content asset rather than becoming the channel identity.",
+        "The actionable adaptation stays within background and semantic-color wiring in the existing scene structure.",
+        "The response delivers a plan without modifying the input project."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "这次做一期 20 秒的天空颜色科普动画，沿用频道的深色移动网格风格。开场提出问题，中间用光线、散射对象、观察者和箭头把关系讲清楚，收尾给知识总结，最后 1.5 秒留成完全静止的阅读时间；背景在场景切换时不要跳回起点。先按 60 fps 制作，但这套视觉还要能在 30 fps 项目中复用，调整共用帧率后时长和动作节奏不要变。频道标识暂缺，以后会放一个约 300×90 像素的标记，正文标题有时较长，请让长标题和标记之间留些间距，图解也别被遮住；现在没有标记时正常利用画面宽度。给我可编辑代码、场景计划和可执行的时序、版式验收。事实文案由我后续审核，请注明待审核，不联网、不发布、不改原视频，也不需要完整视频编码。",
+      "expected_output": "可编辑的 20 秒科普新片，以科学对象的空间关系组织正文；可调整共用帧率、连续背景、结尾静止和品牌布局均有可运行证据。频道身份保持未配置，科学文案注明待审核。",
+      "files": [],
+      "expectations": [
+        "The delivered production Composition initially uses the requested 60 fps.",
+        "Changing the shared fps setting changes the fps of the registered Composition without editing scene code.",
+        "The registered video lasts 20 seconds within one frame at both 30 fps and 60 fps.",
+        "The actual scene timeline covers every integer frame of the registered video.",
+        "Any overlapping scene intervals correspond to explicit planned transitions.",
+        "Animation milestones occur at the same elapsed times, within one frame, when the configured fps changes between 30 and 60.",
+        "Background displacement follows one uninterrupted Composition-time trajectory across every scene boundary.",
+        "The moving background has an identical rendered state at every frame in the final 1.5-second hold.",
+        "The ending foreground has an identical rendered state at every frame in the final 1.5-second hold.",
+        "With a 300-by-90-pixel channel mark, the actual long scientific title is separated from the mark's occupied bounds by positive layout spacing.",
+        "With a 300-by-90-pixel channel mark, the actual scientific diagram stays outside the mark's occupied bounds.",
+        "With no channel mark, the actual body layout has no unused region solely reserved for an absent mark.",
+        "The diagram depicts light rays interacting with scattering objects and reaching an observer.",
+        "The supplied scientific copy is identified as pending factual review.",
+        "The production channel name remains unconfigured.",
+        "The production channel logo remains unconfigured."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "附件 shared-style 是频道当前的共用视觉代码，已有两个不同布局的视频，还有创建下一期用的 starter 默认配置。我想让白色网格更清楚、移动更明显：把共用主网格透明度从 0.115 调到 0.15，移动速度从每秒 12 像素调到 20 像素，并同步 starter，让以后新一期也从这个版本开始。只改这两个风格值；第二个视频自己的细网格透明度和正文字号覆盖要保留，其他字体、色板、频道标记、内容和时间轴都不动。请给出可审阅的改动和可运行检查，另做一个从 starter 创建的验收预览，比较两个视频各自开场、正文、片尾的代表性画面，也确认长标题没有挤到频道标记。验收代码单独放，正式风格改动仅限这两个值；不要用逐个视频写死参数的办法，不需要编码完整视频。",
+      "expected_output": "在附件现有共用配置与 starter 中完成两项风格调整；两部既有视频和新建视频得到一致的主网格与速度，既有局部覆盖和其他配置保持原值。用实际消费者及代表性画面复查传播结果和布局，无内容或时间轴改动。",
+      "files": [
+        "evals/fixtures/shared-style/README.md",
+        "evals/fixtures/shared-style/src/Episodes.tsx",
+        "evals/fixtures/shared-style/src/index.tsx",
+        "evals/fixtures/shared-style/src/style.ts",
+        "evals/fixtures/shared-style/src/video-settings.ts",
+        "evals/fixtures/shared-style/starter/defaults.ts",
+        "evals/fixtures/shared-style/tsconfig.json"
+      ],
+      "expectations": [
+        "Both registered videos render grid motion at the requested shared speed of 20 pixels per second.",
+        "Both registered videos render major grid lines at the requested shared opacity of 0.15.",
+        "The second video's local minor-grid opacity remains 0.02.",
+        "The second video's local body font size remains 44 pixels.",
+        "All unrequested shared style properties retain their input values.",
+        "A new video initialized from the starter renders grid motion at 20 pixels per second.",
+        "A new video initialized from the starter renders major grid lines at opacity 0.15.",
+        "Both existing videos retain their original content.",
+        "Both existing videos retain their original frame-based timelines.",
+        "Before-and-after evidence covers the opener, body, and ending of each registered video.",
+        "The long-title layout remains outside the existing channel mark's occupied bounds."
+      ]
+    }
+  ]
+}

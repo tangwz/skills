@@ -1,0 +1,11 @@
+1
+00:00:00,000 --> 00:00:06,000
+The source emits a signal.
+
+2
+00:00:06,000 --> 00:00:16,000
+The filter selects a signal band.
+
+3
+00:00:16,000 --> 00:00:22,000
+The receiver observes the result.

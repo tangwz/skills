@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2018",
+    "module": "commonjs",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["DOM", "ES2020"],
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noUnusedLocals": true
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Remotion Knowledge Video"
+  short_description: "Consistent science videos with reusable branding and scenes"
+  default_prompt: "Use $remotion-knowledge-video to create a Remotion explainer with the channel's shared visual style, title cards, logo, opener, and ending."
