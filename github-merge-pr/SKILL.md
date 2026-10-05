@@ -37,7 +37,11 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 
 **非队列路径同时约束 base。** `--match-head-commit` 不校验 base SHA，GitHub 合并接口也没有 expected-base 参数。仅当适用保护规则在合并时强制通过针对当前 base / 测试合并结果的必需检查，且要求分支保持最新时，才采用此路径。只有 head 的 CI 或刚预读的 base SHA 不足以阻止 base 随后推进；缺少这种集成约束时改走已核验策略的 merge queue，或停止并说明限制，不绕过保护，见 [分支保护](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)。
 
-GitHub rebase merge 逐个重放非空主题提交，但会改变提交 ID，并且不能保留原提交者的签名。检查整个 PR 范围的签名及平台验证状态、适用的签名要求；存在签名时说明来源验证的损失，依据已有授权确认用户接受该损失，或采用满足前述原子约束和签名规则的保留/授权重签策略。接受 SHA 改变不等于接受签名丢失，不能仅凭最终 tree 一样宣称来源验证被保留；无可用策略则停止，见 [rebase 签名限制](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-rebase-and-merge)。只有单一逻辑变更且用户接受压缩时才考虑 squash。依据已有授权选择；没有相应授权不执行 rebase、squash 或覆盖已发布历史。上述集成保护适用、PR 不属于 stack、仓库允许且已获 rebase 授权、目标分支不要求队列时，例如：
+GitHub rebase merge 逐个重放非空主题提交，但会改变提交 ID；squash 将源提交替换为一个新提交，只在单一逻辑变更且用户接受压缩时考虑。依据已有授权选择；没有相应授权不执行 rebase、squash 或覆盖已发布历史。
+
+**所有改写路径都检查签名来源。** 选择 rebase、squash 或采用这些策略的合并队列前，检查整个 PR 范围的签名、平台验证状态与适用签名要求。这些方式不保留原提交者的逐提交签名；新的 squash 提交即使带有 GitHub 的 Verified 签名，也不能替代原作者的来源验证。存在签名时说明损失，依据已有授权确认用户接受，或采用满足前述原子约束和签名规则的保留/授权重签策略。接受 SHA 改变或提交压缩不等于接受原签名丢失，不能仅凭最终 tree 一样宣称来源验证被保留；无可用策略则停止。见 [rebase 签名限制](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-rebase-and-merge) 与 [squash 签名规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-signed-commits)。
+
+上述集成保护适用、PR 不属于 stack、仓库允许且已获 rebase 授权、目标分支不要求队列时，例如：
 
 ```bash
 gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
