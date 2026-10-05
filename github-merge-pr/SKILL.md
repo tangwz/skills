@@ -1,0 +1,90 @@
+---
+name: github-merge-pr
+description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端 PR 分支并保留本地分支。用户要求合并 PR、线性历史或合并后仅保留本地分支时使用；单纯查看 PR 或修复审查意见不触发合并。
+---
+
+# GitHub PR 线性合并
+
+默认目标是 `main`：保留按功能主题拆分的提交，不新增 merge commit；合并后只删除该 PR 的远端分支，保留本地分支。用户指定其他目标或策略时以其要求为准。与用户沟通用简体中文，提交信息和代码使用 English。
+
+## 范围与授权
+
+- 优先使用 `gh` CLI；临时失败时可使用已连接的 GitHub 工具核对真实状态。不要把本机网络故障解释为仓库权限不足。
+- 技能被选中不等于用户授权合并、删除分支或重写历史。依据本次请求和已有授权执行；用户已经明确授权的动作不重复询问。
+- 阅读目标仓库的 `AGENTS.md`。不夹带其他改动，不擅自更新架构、仓库合并设置或分支保护，不绕过规则、审查和 CI。
+- 仅处理已授权的审查修复；修复按主题提交到原 PR，验证后再 resolve。过期讨论不自动视为已修复。发布 PR 评论、联系审查者或建立持续监控需要相应授权。
+
+## 合并前的证据
+
+1. 从用户指定的 PR 或当前分支确认仓库、PR 编号、base/head 分支、head 所属仓库与对应 remote。不要假设 remote 总是 `origin`，也不要把 fork 的分支当成 base 仓库的同名分支。
+2. 读取 PR 最新状态、完整审查讨论及审查摘要、当前 head 的 CI、分支保护、rulesets 和合并队列要求。讨论分页要读完。PR 已合并时只完成剩余清理；已关闭但未合并时停止。未解决意见、进行中的审查、仍有效的 changes requested、待完成的必需检查或相关 CI 失败都应先处理。
+3. 记录完整的已验证 head SHA 和 base SHA。CI 必须覆盖该 head，或平台明确记录的对应测试合并提交；不能用旧 head 的成功结果代替。没有配置 CI 时按仓库约定采用可用验证，说明依据。
+4. 查看 `git status`、`git branch -vv`、`git worktree list --porcelain` 和最新远端 refs。本地待推送提交必须与已验证 PR head 一致；目标分支不能夹带未发布提交。head/base 变化时重新评估，不顺手合入未审查的提交。
+5. 保留所有不属于本次任务的已修改、暂存和未跟踪文件。目标分支已在另一 worktree 检出时使用该 worktree。可证明不受影响的修改不阻碍快进；先记录其差异，之后比较。若会冲突，停止依赖该工作区的写操作，不自动 stash、reset 或清理文件。
+
+单纯合并且树和已验证 head 不变时，复用现有测试证据。只有新增修复、冲突解决或集成结果改变才补充有意义的验证。
+
+## 选择能保持直线的方式
+
+**优先快进。** 最新远端 base 是已验证 head 的祖先，新增区间没有 merge commit，且仓库流程允许直接更新 base 时，使用 `--ff-only`。这保留原始提交 ID 和每个功能主题的边界。直接推送可能让 GitHub 将 PR 标记为间接合并，因此不能利用该路径绕过 PR 的要求；见 [GitHub 合并说明](https://docs.github.com/en/pull-requests/reference/pull-request-merges)。
+
+下面的变量均应来自前述核对结果，不能直接照抄未赋值的命令。检查祖先关系成功且 merge commit 列表为空后才继续：
+
+```bash
+git fetch --prune "$base_remote"
+base_before=$(git rev-parse "$base_remote/$base_branch")
+git merge-base --is-ancestor "$base_before" "$reviewed_head"
+git rev-list --min-parents=2 "$base_before..$reviewed_head"
+```
+
+在确认已检出目标分支、且其本地提交不超出远端 base 的 worktree 中快进，推送精确 SHA：
+
+```bash
+git -C "$base_worktree" merge --ff-only "$reviewed_head"
+git push "$base_remote" "$reviewed_head:refs/heads/$base_branch"
+```
+
+普通 push 被拒绝时重新读取远端并评估，不能改成强推。
+
+**需要重排时明确边界。** base 已分叉、PR 区间含 merge commit，或保护规则要求 GitHub 合并时，说明保留原 SHA、线性历史与仓库规则之间的限制。可采用 GitHub rebase merge 保留多个主题提交，但提交 ID 会改变；只有单一逻辑变更且用户接受压缩时才考虑 squash。没有相应授权不执行 rebase、squash 或覆盖已发布历史。已获授权时使用固定的 head 条件，例如：
+
+```bash
+gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
+```
+
+不要使用默认 merge commit，也不要用默认 `gh pr update-branch` 给 PR 引入合并节点。遵守合并队列；已排队不等于合并完成。不能为了得到直线而绕过保护或改写既有 `main` 历史。
+
+## 先确认合并，再清理远端
+
+- 读取 GitHub 的 `merged`、`mergedAt`、`mergeCommit` 和最新远端 base，确认实际合并结果。普通“关闭”不等于合并。快进时应验证原 head 已进入 base；rebase/squash 时依据平台的合并记录、提交对应关系与差异验证，不能要求旧 head SHA 可达。
+- GitHub 合并完成后 fetch base remote，并在目标分支所属 worktree 中用 `--ff-only` 对齐本地 base 至已核对的远端结果。不能用可能创建 merge commit 的默认 `git pull`；本地分叉或脏文件冲突时保留现场并说明阻碍。
+- 本地 topic 分支必须存在且保存此次工作。快进时它和 base 位于同一提交链。rebase/squash 后，旧本地 topic 可能让 `--graph --all` 仍然分叉：核对本地独有提交与 worktree 修改后，按已获授权对齐至合并结果；没有授权则说明限制并保留数据。
+- 禁止使用 `gh pr merge --delete-branch`，因为它会同时删除本地和远端分支；见 [CLI 文档](https://cli.github.com/manual/gh_pr_merge)。不要用 `git branch -d/-D` 或归档仍需保留的 worktree。
+- 只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
+
+可用显式 SHA lease 保护授权的删除，防止核对后分支又被推进；此命令只删除指定 ref，不授权覆盖提交。见 [Git push 文档](https://git-scm.com/docs/git-push)：
+
+```bash
+git push --force-with-lease="refs/heads/$head_branch:$reviewed_head" \
+  "$head_remote" ":refs/heads/$head_branch"
+```
+
+删除成功后 fetch/prune head remote。仅当本地 topic 的 upstream 指向刚删除的分支时，清除该跟踪配置；保留本地分支本身：
+
+```bash
+git branch --unset-upstream "$local_topic"
+```
+
+## 验收与交付
+
+核对以下实际结果：
+
+- GitHub PR 已合并到指定 base，远端 base 包含已验证的改动。
+- 远端 head 分支不存在，本地 topic 分支存在；不能将远端跟踪 ref 误当成本地分支。
+- 合并新增区间没有 merge commit，原有主题提交按选定策略保留。`git log --graph --oneline --decorate --all` 显示目标链的真实形状；其他分支或既有 merge 节点影响全图时明确说明，不删除无关 refs 伪造直线。
+- 相关工作区原有未提交修改完整保留，没有额外改动。
+- 专门监控该 PR 的既有任务在确认合并后按原约定停止；没有现成监控时不另建任务。
+
+对超时、EOF 或 TLS 错误，先读回 PR 与远端 refs，确认上一次写入是否已经成功，再进行有限重试。仍无法核实时停止下一步写操作，报告“合并成功但清理待完成”等精确状态，不把部分完成报告为全部完成。
+
+交付简洁说明 PR 链接、合并方式与最终 SHA、提交保留情况、远端删除和本地保留结果。只报告有证据的状态；新的 base CI 若仍运行，应区分它与合并前已经成功的检查。

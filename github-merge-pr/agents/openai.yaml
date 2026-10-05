@@ -1,0 +1,3 @@
+interface:
+  display_name: "GitHub Merge PR"
+  short_description: "Linear PR merges with local-only branch retention"
