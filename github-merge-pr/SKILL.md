@@ -16,7 +16,7 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 
 ## 合并前的证据
 
-1. 从用户指定的 PR 或当前分支确认仓库、PR 编号、base/head 分支、head 所属仓库与对应 remote。不要假设 remote 总是 `origin`，也不要把 fork 的分支当成 base 仓库的同名分支。
+1. 从用户指定的 PR 或当前分支确认 GitHub 主机、仓库、PR 编号、base/head 分支、head 所属仓库与对应 remote。核对 PR、API 和 Git remote 指向同一主机；所有 `gh api` 调用显式指定该主机。不要假设 remote 总是 `origin`，也不要把 fork 的分支当成 base 仓库的同名分支。
 2. 读取 PR 最新状态、完整审查讨论及审查摘要、当前 head 的 CI、分支保护、rulesets 和合并队列要求。讨论分页要读完。PR 已合并时只完成剩余清理；已关闭但未合并时停止。未解决意见、进行中的审查、仍有效的 changes requested、待完成的必需检查或相关 CI 失败都应先处理。
 3. 记录完整的已验证 head SHA 和 base SHA。CI 必须覆盖该 head，或平台明确记录的对应测试合并提交；不能用旧 head 的成功结果代替。逐项核对有效的必需 approval 的 `commit_id` / `commit.oid` 是否对应该 head，或确认适用保护规则在服务端保证最近一次可审查 push 已获批准；汇总的 `APPROVED` 状态不能替代这一证据。没有配置 CI 时按仓库约定采用可用验证，说明依据。
 4. 查看 `git status`、`git branch -vv`、`git worktree list --porcelain` 和最新远端 refs。本地待推送提交必须与已验证 PR head 一致；目标分支不能夹带未发布提交。head/base 变化时重新评估，不顺手合入未审查的提交。
@@ -55,13 +55,31 @@ gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 - 本地 topic 分支必须存在且保存此次工作。快进时它和 base 位于同一提交链。rebase/squash 后，旧本地 topic 可能让 `--graph --all` 仍然分叉：核对本地独有提交与 worktree 修改后，按已获授权对齐至合并结果；没有授权则说明限制并保留数据。
 - 禁止使用 `gh pr merge --delete-branch`，因为它会同时删除本地和远端分支；见 [CLI 文档](https://cli.github.com/manual/gh_pr_merge)。不要用 `git branch -d/-D` 或归档仍需保留的 worktree。
 - 只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
-- 合并前（考虑仓库自动删除）及手动删除前，在 head 所属仓库分页查询所有以该 head 分支为 base 的开放 PR。存在依赖 PR 时，删除会让 GitHub 自动把它们改为合并目标 base，改变审查上下文与适用保护；停止可能触发删除的操作，说明受影响 PR，并取得这项跨 PR 变更的授权。查询失败或不完整也停止，不把分支删除授权等同于 retarget 其他 PR 的授权，见 [GitHub 分支删除副作用](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request)。
+- 合并或入队前（考虑仓库自动删除）及手动删除前，检查两组开放 PR：以该分支为 base 的依赖 PR，以及以同一主机、head 仓库和分支为 source 的其他 PR。只从共享 source 结果中排除正在合并的 PR（按完整 PR URL），不能只按编号或 base 过滤。依赖 PR 会被自动 retarget，共享 source 的 PR 可能失去来源分支；停止可能触发删除的操作，说明受影响 PR，并取得对应跨 PR 变更的授权。查询失败、分页不完整或仓库/ref 为 null 时也停止，不把分支删除授权等同于修改其他 PR 的授权，见 [GitHub 分支删除副作用](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request)。
 
-`head_repo` 为前面已核对的 head 所属仓库（`owner/name`）。查询示例，必须检查每一页：
+`head_host` 和 `head_repo` 来自已核对的 PR 与 remote，分别为主机和 head 仓库（`owner/name`）。依赖 PR 查询示例：
 
 ```bash
-gh api --paginate --method GET "repos/$head_repo/pulls" \
+gh api --hostname "$head_host" --paginate --method GET "repos/$head_repo/pulls" \
   -f state=open -f base="$head_branch" -f per_page=100
+```
+
+共享 source 使用 head ref 的 `associatedPullRequests`，覆盖不同 base 和 fork 的目标仓库；逐页核对返回的 head 仓库与分支，只排除完整 URL 等于 `pr_url` 的 PR。见 [GitHub Ref 查询](https://docs.github.com/en/graphql/reference/git#ref)：
+
+```bash
+gh api graphql --hostname "$head_host" --paginate \
+  -F owner="${head_repo%%/*}" -F name="${head_repo#*/}" \
+  -f ref="refs/heads/$head_branch" -f query='
+  query($owner: String!, $name: String!, $ref: String!, $endCursor: String) {
+    repository(owner: $owner, name: $name) {
+      ref(qualifiedName: $ref) {
+        associatedPullRequests(first: 100, after: $endCursor, states: OPEN) {
+          nodes { url headRefName headRepository { nameWithOwner } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  }'
 ```
 
 可用显式 SHA lease 保护授权的删除，防止核对后分支又被推进；此命令只删除指定 ref，不授权覆盖提交。见 [Git push 文档](https://git-scm.com/docs/git-push)：
