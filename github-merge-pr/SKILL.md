@@ -33,6 +33,8 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 
 **先确认实际提交范围。** 读取平台的 stack 归属与所有尚未合并的 downstack PR；不能只根据所选 PR 的 base/head 猜测是否独立。属于 stack 时不使用下方单 PR 命令：先确认选定 PR 和全部未合并 downstack PR 的授权，并逐项记录主机、仓库、head SHA 与本地 topic。对每个将落地的 PR 核对审查、CI 和合并策略，完成第 6 步的本地保留，以及下节的依赖 PR、共享 source 和并发清理约束；任一层不满足条件时不启动整个 stack 合并。所有层均满足后才使用官方异步 stack 路径，并逐层验收与清理，见 [堆叠 PR 合并](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-stacked-pull-requests)。
 
+**部分 stack 合并也涉及未选中的 upstack PR。** 读取完整 stack，列出剩余 upstack PR 及平台会自动改写的 head/base；GitHub 会将下一未合并 PR 自动 rebase 到 stack base。对受影响 PR 说明发布分支改写、签名损失及原审批和 CI 证据可能失效，依据已有授权确认这些跨 PR 影响，并逐项记录主机、仓库、原 head SHA 与保留用本地分支。启动异步合并前按第 6 步保存这些精确原 head；任一受影响 PR 范围不明、缺少改写授权或原 head 无法保留时停止，不把所选 PR 的合并授权扩展为 upstack 改写授权。提交请求前重新核对完整 stack 和受影响 heads，变化时重新评估。操作后读回剩余 PR 的新 head/base，保留原 head 的本地分支，不清理未合并 PR 的远端分支；后续合并须重新建立新 head 的审查、CI 和签名证据。
+
 选择 rebase 前检查 PR 新增范围内的每个提交，识别 tree 与唯一父提交相同的初始空提交。GitHub rebase 会丢弃这些提交；发布或自动化标记不能默认为可丢。存在空提交时先取得舍弃它们的明确授权，或选择符合原子约束且保留它们的策略；没有可用策略就停止。验收时记录获准舍弃的提交，不能仅凭最终 tree 一样宣称全部提交保留，见 [GitHub rebase 行为](https://docs.github.com/en/pull-requests/reference/pull-request-merges#rebase-and-merge-your-commits)。
 
 **非队列路径同时约束 base。** `--match-head-commit` 不校验 base SHA，GitHub 合并接口也没有 expected-base 参数。仅当适用保护规则在合并时强制通过针对当前 base / 测试合并结果的必需检查，且要求分支保持最新时，才采用此路径。只有 head 的 CI 或刚预读的 base SHA 不足以阻止 base 随后推进；缺少这种集成约束时改走已核验策略的 merge queue，或停止并说明限制，不绕过保护，见 [分支保护](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)。
