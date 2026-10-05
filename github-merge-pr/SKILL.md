@@ -21,6 +21,7 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 3. 记录完整的已验证 head SHA 和 base SHA。CI 必须覆盖该 head，或平台明确记录的对应测试合并提交；不能用旧 head 的成功结果代替。逐项核对有效的必需 approval 的 `commit_id` / `commit.oid` 是否对应该 head，或确认适用保护规则在服务端保证最近一次可审查 push 已获批准；汇总的 `APPROVED` 状态不能替代这一证据。没有配置 CI 时按仓库约定采用可用验证，说明依据。
 4. 查看 `git status`、`git branch -vv`、`git worktree list --porcelain` 和最新远端 refs。本地待推送提交必须与已验证 PR head 一致；目标分支不能夹带未发布提交。head/base 变化时重新评估，不顺手合入未审查的提交。
 5. 保留所有不属于本次任务的已修改、暂存和未跟踪文件。目标分支已在另一 worktree 检出时使用该 worktree。可证明不受影响的修改不阻碍快进；先记录其差异，之后比较。若会冲突，停止依赖该工作区的写操作，不自动 stash、reset 或清理文件。
+6. 在入队、启用 auto-merge 或任何远端合并前，fetch 已核对的精确 head ref，并确认取回的 SHA 等于 `reviewed_head`；先让真正的本地 `refs/heads/$local_topic` 保存该提交。分支不存在时直接创建而无需 checkout；已存在时核对它指向该 head，不覆盖不同提交或移动另一 worktree 的分支。名称冲突时保留原分支并停止，或按已有授权采用独立本地名称。仅有 `FETCH_HEAD`、远端跟踪 ref 或打算合并后再创建分支，不满足本地保留要求。
 
 单纯合并且树和已验证 head 不变时，复用现有测试证据。只有新增修复、冲突解决或集成结果改变才补充有意义的验证。
 
@@ -52,7 +53,7 @@ gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 
 - 读取 GitHub 的 `merged`、`mergedAt`、`mergeCommit` 和最新远端 base，确认实际合并结果。普通“关闭”不等于合并。快进时应验证原 head 已进入 base；rebase/squash 时依据平台的合并记录、提交对应关系与差异验证，不能要求旧 head SHA 可达。
 - GitHub 合并完成后 fetch base remote，并在目标分支所属 worktree 中用 `--ff-only` 对齐本地 base 至已核对的远端结果。不能用可能创建 merge commit 的默认 `git pull`；本地分叉或脏文件冲突时保留现场并说明阻碍。
-- 本地 topic 分支必须存在且保存此次工作。快进时它和 base 位于同一提交链。rebase/squash 后，旧本地 topic 可能让 `--graph --all` 仍然分叉：核对本地独有提交与 worktree 修改后，按已获授权对齐至合并结果；没有授权则说明限制并保留数据。
+- 验证合并前已保留的本地 topic 分支仍存在且保存此次工作。快进时它和 base 位于同一提交链。rebase/squash 后，旧本地 topic 可能让 `--graph --all` 仍然分叉：核对本地独有提交与 worktree 修改后，按已获授权对齐至合并结果；没有授权则说明限制并保留数据。
 - 禁止使用 `gh pr merge --delete-branch`，因为它会同时删除本地和远端分支；见 [CLI 文档](https://cli.github.com/manual/gh_pr_merge)。不要用 `git branch -d/-D` 或归档仍需保留的 worktree。
 - 只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
 - 合并或入队前（考虑仓库自动删除）及手动删除前，检查两组开放 PR：以该分支为 base 的依赖 PR，以及以同一主机、head 仓库和分支为 source 的其他 PR。只从共享 source 结果中排除正在合并的 PR（按完整 PR URL），不能只按编号或 base 过滤。依赖 PR 会被自动 retarget，共享 source 的 PR 可能失去来源分支；停止可能触发删除的操作，说明受影响 PR，并取得对应跨 PR 变更的授权。查询失败、分页不完整或仓库/ref 为 null 时也停止，不把分支删除授权等同于修改其他 PR 的授权，见 [GitHub 分支删除副作用](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request)。
