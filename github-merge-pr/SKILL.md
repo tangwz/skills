@@ -51,7 +51,18 @@ gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 
 **入队前核对队列的实际策略。** 目标分支要求 merge queue 时，读取该分支适用的队列配置，确认实际使用 merge、rebase 还是 squash；CLI 的 `--rebase` 不会替队列选择策略。merge 会引入合并节点，必须停止；squash 只有符合前述压缩条件并获得授权才可入队；rebase 也需具备相应授权。无法读取或确定队列策略时停止入队，说明阻碍。不能仅凭命令行 flag 推断会保留主题提交，见 [GitHub 合并策略](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github)。
 
-**只条件式直接入队，不启用等待中的 auto-merge。** 先等待入队所需的检查与审查就绪，再重读并核对 head；通过 `gh api graphql` 调用专用 `enqueuePullRequest`，将 `expectedHeadOid` 设置为 `reviewed_head`，并核对实际队列条目。条件不满足时等待或停止，不降级为 auto-merge。`gh pr merge` 在检查未完成时可能启用 auto-merge，而启用时的 expected OID 不约束未来实际合并的 head：有写权限者的新 push 可能保留该设置。已有 auto-merge 时，按已有授权取消并读回状态后再采用条件式操作；无法取消则停止本技能的合并动作并说明仍有外部自动合并。见 [入队接口](https://docs.github.com/en/graphql/reference/pulls#enqueuepullrequestinput) 与 [auto-merge 行为](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request)。
+**按 PR 类型条件式直接入队，不启用等待中的 auto-merge。** 先等待入队所需的检查与审查就绪，再重读并核对 head。只有独立 PR 使用 `gh api graphql` 调用 `enqueuePullRequest`，将 `expectedHeadOid` 设置为 `reviewed_head`，并核对实际队列条目。stack 无论是否要求队列，都沿用 REST `merge-async`，不能改用单 PR 的 GraphQL 入队或同步合并接口；非队列路径明确使用 `merge_action=direct_merge` 和已授权的 `merge_method`，并满足前述集成保护。stack 要求队列时明确使用 `sha=reviewed_head`、`merge_action=merge_queue` 和 `bypass_rules=false`，队列策略仍按上一段核对。以下变量来自已验证的所选 PR 主机、base 仓库与编号，示例仅适用于已完成整个 stack 授权和 head 保留的队列路径：
+
+```bash
+gh api --hostname "$pr_host" --method PUT \
+  "repos/$base_repo/pulls/$pr_number/merge-async" \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  -f sha="$reviewed_head" -f merge_action=merge_queue -F bypass_rules=false
+```
+
+按响应 UUID 读取 `merge-async/{uuid}` 的实际结果；`202` / `pending` 只是请求待处理，`enqueued` 只是已入队，仍需逐层确认最终合并。`409` 时核对已有请求的 expected head、action 和策略，不把旧请求当成本次成功。见 [stack API 边界](https://docs.github.com/en/pull-requests/reference/stacked-pull-requests-apis-and-webhooks)、[异步合并接口](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request-asynchronously) 与 [独立 PR 入队接口](https://docs.github.com/en/graphql/reference/pulls#enqueuepullrequestinput)。
+
+条件不满足时等待或停止，不降级为 auto-merge。`gh pr merge` 在检查未完成时可能启用 auto-merge，而启用时的 expected OID 不约束未来实际合并的 head：有写权限者的新 push 可能保留该设置。已有 auto-merge 时，按已有授权取消并读回状态后再采用条件式操作；无法取消则停止本技能的合并动作并说明仍有外部自动合并。见 [auto-merge 行为](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request)。
 
 已排队不等于合并完成；head 改变或离队后重新评估，不自动为新 head 入队。不要使用默认 merge commit、默认 `gh pr update-branch`、管理员绕过或改变保护规则来获得直线。
 
