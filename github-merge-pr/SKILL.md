@@ -55,6 +55,14 @@ gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 - 本地 topic 分支必须存在且保存此次工作。快进时它和 base 位于同一提交链。rebase/squash 后，旧本地 topic 可能让 `--graph --all` 仍然分叉：核对本地独有提交与 worktree 修改后，按已获授权对齐至合并结果；没有授权则说明限制并保留数据。
 - 禁止使用 `gh pr merge --delete-branch`，因为它会同时删除本地和远端分支；见 [CLI 文档](https://cli.github.com/manual/gh_pr_merge)。不要用 `git branch -d/-D` 或归档仍需保留的 worktree。
 - 只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
+- 合并前（考虑仓库自动删除）及手动删除前，在 head 所属仓库分页查询所有以该 head 分支为 base 的开放 PR。存在依赖 PR 时，删除会让 GitHub 自动把它们改为合并目标 base，改变审查上下文与适用保护；停止可能触发删除的操作，说明受影响 PR，并取得这项跨 PR 变更的授权。查询失败或不完整也停止，不把分支删除授权等同于 retarget 其他 PR 的授权，见 [GitHub 分支删除副作用](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request)。
+
+`head_repo` 为前面已核对的 head 所属仓库（`owner/name`）。查询示例，必须检查每一页：
+
+```bash
+gh api --paginate --method GET "repos/$head_repo/pulls" \
+  -f state=open -f base="$head_branch" -f per_page=100
+```
 
 可用显式 SHA lease 保护授权的删除，防止核对后分支又被推进；此命令只删除指定 ref，不授权覆盖提交。见 [Git push 文档](https://git-scm.com/docs/git-push)：
 
