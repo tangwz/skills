@@ -34,7 +34,7 @@
 2. 使用本地字体 loader 等待字体完成，并将真实 family alias 传入品牌组件。纯字体文件放在 public，字体声明和组件中的 family 必须匹配。
 3. 在 Composition 外层放共用背景，在每个场景中放相关标题、图解和品牌标记。内部片头片尾设置 `showBackground={false}`，使移动网格使用全局帧并跨场景连续；外层 `holdSeconds` 指定结尾背景静止时间。模板预览的正文只是用法示例，应替换为本期场景。
 4. 用 `Sequence` 编排片头/正文/片尾，依据 Composition fps 换算秒数。默认 2 秒片头为 120 帧、3 秒片尾为 180 帧，12 秒品牌样片共 720 帧。单个讲解片段不自动加这两段。
-5. 注册需要交付的 Composition。可复查的品牌预览与验证入口保存在目标项目约定的目录，并纳入项目维护；打包缓存可使用临时目录。不改用户已有 Composition 的 ID、帧率或帧长。
+5. 新作品使用独立内容组件和未占用的 Composition ID，只追加注册，保留已有条目。创建前检查文件名、导出名和 ID；重名时按主题增加变体后缀，不覆盖旧文件。单期独有的时序、素材及渲染输出使用该作品的独立路径。可复查的品牌预览与验证入口保存在目标项目约定的目录，并纳入项目维护；打包缓存可使用临时目录。不改用户已有 Composition 的 ID、帧率或帧长，除非本次明确要求修改该作品。
 
 完整节目共享品牌层，不共享全部场景 DOM。允许直接 SVG、图片、公式与数据可视化表达主题，不为一致性牺牲知识表达。
 
@@ -47,12 +47,12 @@ npm run lint
 npm run dev
 ```
 
-按真实入口路径、Composition ID 与时间轴选择关键帧。以下示例假设入口为 `src/index.ts`、Composition ID 为 `EpisodePreview`，时长 12 秒、60 fps；对应 1 秒、6 秒及最后一帧。替换为目标项目的实际值：
+按真实入口路径、Composition ID 与时间轴选择关键帧，输出目录按本次作品独立命名。以下示例假设入口为 `src/index.ts`、Composition ID 为 `EpisodePreview`，时长 12 秒、60 fps；对应 1 秒、6 秒及最后一帧。替换为目标项目的实际值，并确认输出路径不属于旧作品：
 
 ```bash
-npx remotion still src/index.ts EpisodePreview output/episode-opening.png --frame=60
-npx remotion still src/index.ts EpisodePreview output/episode-change.png --frame=360
-npx remotion still src/index.ts EpisodePreview output/episode-ending.png --frame=719
+npx remotion still src/index.ts EpisodePreview output/episode-preview/opening.png --frame=60
+npx remotion still src/index.ts EpisodePreview output/episode-preview/change.png --frame=360
+npx remotion still src/index.ts EpisodePreview output/episode-preview/ending.png --frame=719
 ```
 
 示例帧必须由实际 Composition 帧数校核。最低检查第一张完整信息画面、核心变化和最终稳定画面；修改品牌组件时另检查 Logo 最宽和最长标题同时出现的场景。移动背景另检查跨场景边界的连续性。证明末尾静止时，逐帧比较整个稳定区的背景与前景，并保留稳定区之前的运动样本；只比较稳定区首尾帧无法排除中间变化。跨帧率同秒比较使用明确的像素差异阈值，避免把不同环境中的字体光栅化差异误判为时序变化。视频动效、转场和声音同步需要 Studio 或片段预览，静帧不能证明这些。
