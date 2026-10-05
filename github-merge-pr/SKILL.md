@@ -26,33 +26,21 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 
 ## 选择能保持直线的方式
 
-**优先快进。** 最新远端 base 是已验证 head 的祖先，新增区间没有 merge commit，且仓库流程允许直接更新 base 时，使用 `--ff-only`。这保留原始提交 ID 和每个功能主题的边界。直接推送可能让 GitHub 将 PR 标记为间接合并，因此不能利用该路径绕过 PR 的要求；见 [GitHub 合并说明](https://docs.github.com/en/pull-requests/reference/pull-request-merges)。
+**远端合并必须带 head 条件。** 使用在服务端将 `reviewed_head` 与当前 PR head 一起校验的合并操作；head 已变化时应拒绝合并并重新核对。固定源 SHA 的普通 `git push` 只检查目标 ref 能否更新，不能保证 PR head 仍是已验证版本；再次预读 head 也不能消除这两个操作之间的竞态。见 [GitHub 条件式合并接口](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)。
 
-下面的变量均应来自前述核对结果，不能直接照抄未赋值的命令。检查祖先关系成功且 merge commit 列表为空后才继续：
+**快进以原子约束为前提。** 若平台提供能原子校验 PR head 的快进合并机制，且仓库流程允许、base 是 head 的祖先、新增区间无 merge commit，可用它保留原 SHA。没有这种已验证机制时，不直接向 base 推送旧 head。标准 GitHub 合并没有纯快进选项，不能为保留 SHA 改用无 head 条件的 push。
 
-```bash
-git fetch --prune "$base_remote"
-base_before=$(git rev-parse "$base_remote/$base_branch")
-git merge-base --is-ancestor "$base_before" "$reviewed_head"
-git rev-list --min-parents=2 "$base_before..$reviewed_head"
-```
-
-在确认已检出目标分支、且其本地提交不超出远端 base 的 worktree 中快进，推送精确 SHA：
-
-```bash
-git -C "$base_worktree" merge --ff-only "$reviewed_head"
-git push "$base_remote" "$reviewed_head:refs/heads/$base_branch"
-```
-
-普通 push 被拒绝时重新读取远端并评估，不能改成强推。
-
-**需要重排时明确边界。** base 已分叉、PR 区间含 merge commit，或保护规则要求 GitHub 合并时，说明保留原 SHA、线性历史与仓库规则之间的限制。可采用 GitHub rebase merge 保留多个主题提交，但提交 ID 会改变；只有单一逻辑变更且用户接受压缩时才考虑 squash。没有相应授权不执行 rebase、squash 或覆盖已发布历史。已获授权时使用固定的 head 条件，例如：
+**非队列路径使用条件式合并。** GitHub rebase merge 保留多个主题提交，但会改变提交 ID；只有单一逻辑变更且用户接受压缩时才考虑 squash。说明这些限制，依据已有授权选择；没有相应授权不执行 rebase、squash 或覆盖已发布历史。仓库允许且已获 rebase 授权、目标分支不要求队列时，例如：
 
 ```bash
 gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 ```
 
-不要使用默认 merge commit，也不要用默认 `gh pr update-branch` 给 PR 引入合并节点。遵守合并队列；已排队不等于合并完成。不能为了得到直线而绕过保护或改写既有 `main` 历史。
+**入队前核对队列的实际策略。** 目标分支要求 merge queue 时，读取该分支适用的队列配置，确认实际使用 merge、rebase 还是 squash；CLI 的 `--rebase` 不会替队列选择策略。merge 会引入合并节点，必须停止；squash 只有符合前述压缩条件并获得授权才可入队；rebase 也需具备相应授权。无法读取或确定队列策略时停止入队或启用 auto-merge，说明阻碍。不能仅凭命令行 flag 推断会保留主题提交，见 [GitHub 合并策略](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github)。
+
+队列路径同样携带已验证 head 的条件；已排队或已启用 auto-merge 不等于合并完成。不要使用默认 merge commit、默认 `gh pr update-branch`、管理员绕过或改变保护规则来获得直线。
+
+**远端确认之前不推进本地 base。** 先完成条件式远端合并并读回实际结果，再执行下一节的本地快进。远端拒绝、失败、结果不明或仍在队列时，本地 base 保持原位置；只做状态核对，不自动回滚或强推。
 
 ## 先确认合并，再清理远端
 
