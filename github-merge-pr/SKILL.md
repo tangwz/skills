@@ -60,6 +60,8 @@ gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 - 只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
 - 合并或入队前（考虑仓库自动删除）及手动删除前，检查两组开放 PR：以该分支为 base 的依赖 PR，以及以同一主机、head 仓库和分支为 source 的其他 PR。只从共享 source 结果中排除正在合并的 PR（按完整 PR URL），不能只按编号或 base 过滤。依赖 PR 会被自动 retarget，共享 source 的 PR 可能失去来源分支；停止可能触发删除的操作，说明受影响 PR，并取得对应跨 PR 变更的授权。查询失败、分页不完整或仓库/ref 为 null 时也停止，不把分支删除授权等同于修改其他 PR 的授权，见 [GitHub 分支删除副作用](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request)。
 
+**PR 关联预查不具备原子性。** 查询后仍可能新建依赖或共享 source 的 PR；SHA lease 只校验 ref 的提交位置，不能锁定 PR 关联集合。涉及可并发使用的分支时，触发删除前必须有能防止新关联的仓库侧协调窗口，或已有明确接受本次剩余并发影响的用户授权；仅授权删除该分支不能推定授权影响未知 PR。条件不满足时不执行手动删除，并保留远端分支报告待清理；自动删除可能触发相同影响时，在合并或入队前停止。不要为此擅自修改仓库设置或保护，见 [分支删除影响](https://docs.github.com/en/pull-requests/how-tos/commit-changes/managing-branches-within-your-repository#deleting-a-branch)。
+
 `head_host` 和 `head_repo` 来自已核对的 PR 与 remote，分别为主机和 head 仓库（`owner/name`）。依赖 PR 查询示例：
 
 ```bash
@@ -85,7 +87,7 @@ gh api graphql --hostname "$head_host" --paginate \
   }'
 ```
 
-可用显式 SHA lease 保护授权的删除，防止核对后分支又被推进；此命令只删除指定 ref，不授权覆盖提交。见 [Git push 文档](https://git-scm.com/docs/git-push)：
+满足上述 PR 关联与并发条件后，可用显式 SHA lease 保护授权的删除，防止核对后分支又被推进；它不保护 PR 关联集合，此命令只删除指定 ref，不授权覆盖提交。见 [Git push 文档](https://git-scm.com/docs/git-push)：
 
 ```bash
 git push --force-with-lease="refs/heads/$head_branch:$reviewed_head" \
