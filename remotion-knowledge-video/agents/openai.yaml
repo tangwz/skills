@@ -1,4 +1,4 @@
 interface:
   display_name: "Remotion Knowledge Video"
-  short_description: "Branded explainers paced to the narration"
-  default_prompt: "Use $remotion-knowledge-video to create a Remotion explainer with the channel's shared visual style and match its timing to my narration script or recording."
+  short_description: "Branded explainers and batches paced to narration"
+  default_prompt: "Use $remotion-knowledge-video to create branded explainers paced to my narration, exporting a separate video for each Markdown-delimited transcript section."

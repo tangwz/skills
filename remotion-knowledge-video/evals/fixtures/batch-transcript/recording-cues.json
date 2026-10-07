@@ -1,0 +1,61 @@
+{
+  "timingSource": "user-confirmed full-recording cues; no audio file supplied",
+  "retainedRecordingSeconds": 53,
+  "clips": [
+    {
+      "order": 1,
+      "sectionTitle": "Expansion",
+      "sourceAudioStartSeconds": 0,
+      "sourceAudioEndSeconds": 12,
+      "audioStartSeconds": 0,
+      "extraTailSeconds": 0,
+      "cues": [
+        {
+          "action": "expansion",
+          "target": "start",
+          "sourceCueSeconds": 2
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "sectionTitle": "Nonlinear activation",
+      "sourceAudioStartSeconds": 12,
+      "sourceAudioEndSeconds": 37,
+      "audioStartSeconds": 0.5,
+      "extraTailSeconds": 0,
+      "cues": [
+        {
+          "action": "activation",
+          "target": "start",
+          "sourceCueSeconds": 14.5
+        },
+        {
+          "action": "affine-equivalence",
+          "target": "settled",
+          "sourceCueSeconds": 32
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "sectionTitle": "Projection",
+      "sourceAudioStartSeconds": 37,
+      "sourceAudioEndSeconds": 53,
+      "audioStartSeconds": 0,
+      "extraTailSeconds": 0,
+      "cues": [
+        {
+          "action": "projection",
+          "target": "start",
+          "sourceCueSeconds": 41
+        },
+        {
+          "action": "summary",
+          "target": "settled",
+          "sourceCueSeconds": 49
+        }
+      ]
+    }
+  ]
+}

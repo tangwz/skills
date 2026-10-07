@@ -144,6 +144,49 @@
         "The supplied narration wording is preserved.",
         "The timing evidence is identified as user-confirmed cues without claiming that the unavailable recording was listened to."
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "Use the attached full Markdown transcript to make a batch of explainer videos. Each top-level Markdown horizontal rule separates different video files; preserve the original order and wording. Front matter is metadata, headings are visual titles, and the parenthetical stage directions and code examples are not spoken. Skip empty sections. There is no recording or personal reading-rate sample yet: estimate the spoken duration of each section separately and explain your assumptions. Use one channel style at 60 fps; for this review, render at 640 by 360. Do not add a channel opener or end card to every section and do not generate narration or explanatory captions. Deliver editable compositions and an actual separate MP4 for each nonempty narration section, with a source-section-to-file list, estimated and encoded durations, and decoding checks. I need the individual files for editing together later.",
+      "expected_output": "Three distinct playable MP4 files and three independently registered animations for expansion, nonlinear activation, and projection, in source order. Metadata, code-fence rules, the Setext heading underline, and empty sections do not create videos. Each file follows its own spoken-time budget; all three use the same visual style and 60 fps.",
+      "files": ["evals/fixtures/batch-transcript/transcript.md"],
+      "expectations": [
+        "Exactly three distinct MP4 output files are actually produced.",
+        "Each produced MP4 can be decoded as a video.",
+        "The source-to-output mapping preserves expansion, nonlinear activation, and projection in that order.",
+        "Each output contains the animation for its own narration section rather than being a copy of another output or the full compilation.",
+        "The editable content mapped to each output preserves its corresponding supplied narration wording.",
+        "Exactly three independent Composition registrations consume the three sections.",
+        "Each registered clip uses its own timeline starting at zero.",
+        "The central duration budget of each clip is explained by that section's spoken content and declared pauses.",
+        "Unspoken metadata, headings, stage directions and code examples are excluded from the narration estimates.",
+        "Each encoded duration agrees with its own declared budget within one video frame.",
+        "All produced videos are encoded at the requested 60 fps.",
+        "The same channel colors, typography, and background style are used across all output videos.",
+        "No additional unspoken channel opener or end-card time is appended to the sections."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Create independently previewable explainer animations from the attached Markdown transcript, one per nonempty section separated by a top-level horizontal rule. The other attachment gives my confirmed source intervals and keyword timings in one 53-second recording. Keep these intervals and the script unchanged. Use the given 0.5-second lead-in only for the second clip; the other clips start with their narration, and no clip needs extra tail time or a repeated channel bumper. Convert the recording cues into each clip's timeline and make the specified animation starts or settled results happen at those points. Register each clip at 60 fps, provide a source-to-Composition list with durations, and checks connected to actual animation states. No audio file is attached: do not claim to have listened, generate speech, or encode full videos for this pass.",
+      "expected_output": "Three independent registered clips of 12, 25.5, and 16 seconds. Source-recording cues are shifted into the matching clip exactly once; the second clip includes only its specified 0.5-second lead-in. Editable animations and consumed-state checks establish the keyword-to-action mapping without claiming audio verification.",
+      "files": [
+        "evals/fixtures/batch-transcript/transcript.md",
+        "evals/fixtures/batch-transcript/recording-cues.json"
+      ],
+      "expectations": [
+        "Exactly three independent compositions are registered for the three nonempty narration sections.",
+        "The first clip's registered duration is 12 seconds within one frame at 60 fps.",
+        "The second clip's registered duration is 25.5 seconds within one frame at 60 fps.",
+        "The third clip's registered duration is 16 seconds within one frame at 60 fps.",
+        "The first clip's expansion animation starts within 0.3 seconds of its own time 2 seconds.",
+        "The second clip's activation animation starts within 0.3 seconds of its own time 3 seconds.",
+        "The second clip's affine-equivalence result settles within 0.3 seconds of its own time 20.5 seconds.",
+        "The third clip's projection animation starts within 0.3 seconds of its own time 4 seconds.",
+        "The third clip's summary settles within 0.3 seconds of its own time 12 seconds.",
+        "The supplied source recording intervals are preserved in the editable clip mappings.",
+        "The timing evidence is identified as user-confirmed source cues without claiming playback of the unavailable recording."
+      ]
     }
   ]
 }
