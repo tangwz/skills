@@ -7,6 +7,47 @@ const { splitTranscript } = require("./split-transcript.cjs");
 const { frameAt, audioCoverage, buildPlans, stateAt } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
 const ts = require("typescript");
+const React = require("react");
+
+function loadClip() {
+  const extensions = [".ts", ".tsx"];
+  const previous = extensions.map((extension) => require.extensions[extension]);
+  try {
+    for (const extension of extensions) {
+      require.extensions[extension] = (module, file) => {
+        const compiled = ts.transpileModule(fs.readFileSync(file, "utf8"), {
+          compilerOptions: {
+            module: ts.ModuleKind.CommonJS,
+            target: ts.ScriptTarget.ES2022,
+            jsx: ts.JsxEmit.ReactJSX,
+            esModuleInterop: true,
+          },
+        });
+        module._compile(compiled.outputText, file);
+      };
+    }
+    return require("./Clip.tsx");
+  } finally {
+    extensions.forEach((extension, index) => {
+      if (previous[index]) require.extensions[extension] = previous[index];
+      else delete require.extensions[extension];
+    });
+  }
+}
+
+const { Diagram } = loadClip();
+
+function textOpacities(element, opacity = 1, labels = new Map()) {
+  React.Children.forEach(element, (child) => {
+    if (!React.isValidElement(child)) return;
+    const effectiveOpacity = opacity * Number(child.props.opacity ?? 1);
+    if (child.type === "text") {
+      labels.set(child.props.children, effectiveOpacity);
+    }
+    textOpacities(child.props.children, effectiveOpacity, labels);
+  });
+  return labels;
+}
 
 const gridModule = {};
 new Function(
@@ -55,6 +96,44 @@ test("a leading rule without YAML cannot swallow speech through a fenced rule", 
     result.sections.flatMap((section) => section.paragraphs),
     ["First spoken paragraph.", "Second spoken paragraph."],
   );
+});
+
+test("YAML-shaped leading speech is preserved with BOM and CRLF variants", async () => {
+  const original = fixture("leading-mapping.md");
+  for (const source of [
+    original,
+    "\uFEFF" + original,
+    original.replaceAll("\n", "\r\n"),
+    "\uFEFF" + original.replaceAll("\n", "\r\n"),
+  ]) {
+    const { metadataEnd, sections } = await splitTranscript(source);
+    assert.equal(metadataEnd, 0);
+    assert.equal(sections.filter((section) => !section.empty).length, 2);
+    assert.deepEqual(
+      sections.flatMap((section) => section.paragraphs),
+      ["Speaker: First sentence", "Second sentence."],
+    );
+    for (const section of sections) {
+      assert.equal(section.raw, source.slice(section.start, section.end));
+    }
+  }
+});
+
+test("unknown, mixed or non-string metadata fields cannot discard narration", async () => {
+  for (const mapping of [
+    "title: A topic\nSpeaker: First sentence",
+    "title: [Spoken, sentence]",
+    "language: 42",
+    "title: ''",
+  ]) {
+    const source = `---\n${mapping}\n\n---\n\nSecond sentence.\n`;
+    const { metadataEnd, sections } = await splitTranscript(source);
+    assert.equal(metadataEnd, 0);
+    const spoken = sections.filter((section) => !section.empty);
+    assert.equal(spoken.length, 2);
+    assert.ok(spoken[0].raw.includes(mapping));
+    assert.ok(spoken[0].paragraphs.length > 0);
+  }
 });
 
 test("nested rules, code, HTML and Setext underlines do not create clips", async () => {
@@ -134,6 +213,37 @@ test("rendered action state follows each estimated keyword and freezes throughou
   assert.equal(new Set(plans.map((plan) => plan.totalFrames)).size, 3);
 });
 
+const resultLabels = {
+  expansion: [["512 features"], ["Same token count"]],
+  activation: [
+    ["ReLU(x) = max(0, x)"],
+    ["Without activation", "W2(W1x + b1) + b2", "= Ax + b"],
+    ["Nonlinearity adds expressive power"],
+  ],
+  projection: [
+    ["128 features", "Ready for residual addition"],
+    ["Expand  /  Activate  /  Project"],
+  ],
+};
+
+for (const [kind, groups] of Object.entries(resultLabels)) {
+  test(`${kind} SVG labels reveal only with their corresponding narration cue`, async () => {
+    const { sections } = await splitTranscript(fixture("transcript.md"));
+    const plan = buildPlans(sections).find((entry) => entry.kind === kind);
+    for (const [index, cue] of plan.cues.entries()) {
+      for (const offset of [-1, 0, 1, frameAt(0.8)]) {
+        const actions = stateAt(cue.startFrame + offset, plan).actions;
+        const labels = textOpacities(Diagram({ kind, actions }));
+        for (const label of groups[index]) {
+          assert.equal(labels.get(label), actions[index], label);
+        }
+        if (kind === "expansion") assert.equal(labels.get("128 features"), 1);
+        if (kind === "projection") assert.equal(labels.get("512 features"), 1);
+      }
+    }
+  });
+}
+
 test("a new batch cannot overwrite an existing session directory", () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-batch-"));
   try {
@@ -185,6 +295,114 @@ test("a changed plan cannot silently reuse a completed output", async () => {
       ),
     );
     assert.equal(sha256(path.join(directory, "Test-1.mp4")), digest);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+const batchChanges = {
+  addition: (plans) => [...plans, { id: "Test-4", duration: 1 }],
+  removal: (plans) => plans.slice(0, -1),
+  reordering: (plans) => plans.toReversed(),
+  "later input change": (plans) =>
+    plans.map((plan, index) => (index === 2 ? { ...plan, duration: 2 } : plan)),
+};
+
+for (const [change, modify] of Object.entries(batchChanges)) {
+  test(`batch ${change} is rejected before rendering or changing any output`, async () => {
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-plan-set-"),
+    );
+    const plans = [1, 2, 3].map((order) => ({
+      id: `Test-${order}`,
+      duration: 1,
+    }));
+    const calls = [];
+    const render = async (plan, file) => {
+      calls.push(plan.id);
+      fs.writeFileSync(file, plan.id);
+    };
+    try {
+      const directory = reserveBatch(parent, "sample");
+      await renderBatch(directory, plans, render, async () => ({
+        decoded: true,
+      }));
+      const snapshot = () =>
+        Object.fromEntries(
+          fs
+            .readdirSync(directory)
+            .map((file) => [file, sha256(path.join(directory, file))]),
+        );
+      const before = snapshot();
+      calls.length = 0;
+      await assert.rejects(
+        () => renderBatch(directory, modify(plans), render, async () => ({})),
+        /reserve a new batch/,
+      );
+      assert.deepEqual(calls, []);
+      assert.deepEqual(snapshot(), before);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
+
+test("the full plan is registered before the first clip completes", async () => {
+  const parent = fs.mkdtempSync(
+    path.join(os.tmpdir(), "knowledge-plan-start-"),
+  );
+  const plans = [1, 2].map((order) => ({ id: `Test-${order}` }));
+  try {
+    const directory = reserveBatch(parent, "sample");
+    const render = async (plan, file) => {
+      if (plan.id === "Test-1") {
+        const manifestPath = path.join(directory, "manifest.json");
+        const before = fs.readFileSync(manifestPath, "utf8");
+        assert.deepEqual(JSON.parse(before).clips, {});
+        await assert.rejects(
+          () => renderBatch(directory, [plans[0]], render, async () => ({})),
+          /reserve a new batch/,
+        );
+        assert.equal(fs.readFileSync(manifestPath, "utf8"), before);
+      }
+      fs.writeFileSync(file, plan.id);
+    };
+    const manifest = await renderBatch(
+      directory,
+      plans,
+      render,
+      async () => ({}),
+    );
+    assert.ok(
+      Object.values(manifest.clips).every((clip) => clip.status === "complete"),
+    );
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a legacy manifest without the full plan identity fails without mutation", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-legacy-"));
+  try {
+    const directory = reserveBatch(parent, "sample");
+    const manifestPath = path.join(directory, "manifest.json");
+    const before = JSON.stringify({ clips: {} });
+    fs.writeFileSync(manifestPath, before);
+    let rendered = false;
+    await assert.rejects(
+      () =>
+        renderBatch(
+          directory,
+          [{ id: "Test-1" }],
+          async () => {
+            rendered = true;
+          },
+          async () => ({}),
+        ),
+      /reserve a new batch/,
+    );
+    assert.equal(rendered, false);
+    assert.equal(fs.readFileSync(manifestPath, "utf8"), before);
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }

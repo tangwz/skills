@@ -23,9 +23,23 @@ function reserveBatch(parent, name) {
 
 async function renderBatch(directory, plans, render, verify) {
   const manifestPath = path.join(directory, "manifest.json");
-  const manifest = fs.existsSync(manifestPath)
+  const planSetSha256 = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(plans))
+    .digest("hex");
+  const hasManifest = fs.existsSync(manifestPath);
+  const manifest = hasManifest
     ? JSON.parse(fs.readFileSync(manifestPath, "utf8"))
-    : { clips: {} };
+    : { planSetSha256, clips: {} };
+  if (manifest.planSetSha256 !== planSetSha256) {
+    throw new Error(
+      "Batch plan changed or is unverifiable; reserve a new batch",
+    );
+  }
+  const saveManifest = () =>
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+  // Register the entire ordered plan before rendering can be interrupted.
+  if (!hasManifest) saveManifest();
   for (const plan of plans) {
     const file = path.join(directory, `${plan.id}.mp4`);
     const previous = manifest.clips[plan.id];
@@ -64,7 +78,7 @@ async function renderBatch(directory, plans, render, verify) {
         error: error.message,
       };
     }
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    saveManifest();
   }
   return manifest;
 }
