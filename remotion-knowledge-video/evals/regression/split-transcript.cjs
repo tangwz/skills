@@ -4,6 +4,12 @@ const yaml = require("js-yaml");
 const textOf = (node) =>
   node.value ?? (node.children ?? []).map(textOf).join("");
 
+function paragraphsOf(node) {
+  if (["code", "html", "frontMatter"].includes(node.type)) return [];
+  if (node.type === "paragraph") return [textOf(node)];
+  return (node.children ?? []).flatMap(paragraphsOf);
+}
+
 function isKnownMetadata(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const entries = Object.entries(value);
@@ -49,7 +55,7 @@ async function splitTranscript(source) {
       raw,
       empty: raw.trim().length === 0,
       title: textOf(nodes.find((node) => node.type === "heading") ?? {}),
-      paragraphs: nodes.filter((node) => node.type === "paragraph").map(textOf),
+      paragraphs: nodes.flatMap(paragraphsOf),
     });
   };
   for (const node of ast.children) {
