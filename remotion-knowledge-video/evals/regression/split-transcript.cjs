@@ -4,6 +4,20 @@ const yaml = require("js-yaml");
 const textOf = (node) =>
   node.value ?? (node.children ?? []).map(textOf).join("");
 
+function isKnownMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      ([key, field]) =>
+        ["title", "language"].includes(key) &&
+        typeof field === "string" &&
+        field.trim().length > 0,
+    )
+  );
+}
+
 async function splitTranscript(source) {
   let parsedSource = source;
   let ast = await parsers.markdown.parse(parsedSource);
@@ -16,15 +30,10 @@ async function splitTranscript(source) {
     } catch {
       metadata = null;
     }
-    if (
-      metadata &&
-      typeof metadata === "object" &&
-      !Array.isArray(metadata) &&
-      Object.keys(metadata).length > 0
-    ) {
+    if (isKnownMetadata(metadata)) {
       metadataEnd = first.position.end.offset;
     } else {
-      // Keep offsets while preventing an invalid YAML guess from swallowing speech.
+      // Keep offsets while preventing a front-matter guess from swallowing speech.
       parsedSource = source.replace(/^(\uFEFF?)---(?=\r?\n)/, "$1***");
       ast = await parsers.markdown.parse(parsedSource);
     }
