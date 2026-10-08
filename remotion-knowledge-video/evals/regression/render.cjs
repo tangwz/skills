@@ -11,6 +11,7 @@ const {
 const { splitTranscript } = require("./split-transcript.cjs");
 const { audioCoverage, buildPlans, stateAt } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
+const { detectChineseFontFormat } = require("./font-format.cjs");
 
 function command(program, args) {
   const result = spawnSync(program, args, { encoding: "utf8" });
@@ -107,6 +108,10 @@ async function main() {
     if (!fs.existsSync(path.join(fontDirectory, file)))
       throw new Error(`Missing font: ${file}`);
   }
+  const chineseFontData = fs.readFileSync(
+    path.join(fontDirectory, "chinese.ttf"),
+  );
+  const chineseFontFormat = detectChineseFontFormat(chineseFontData);
   const directory = reserveBatch(
     path.resolve(outputParent),
     "batch-regression",
@@ -132,7 +137,13 @@ async function main() {
     "chinese.ttf",
     "mono.woff2",
   ]) {
-    fs.copyFileSync(path.join(fontDirectory, file), path.join(publicDir, file));
+    if (file === "chinese.ttf")
+      fs.writeFileSync(path.join(publicDir, file), chineseFontData);
+    else
+      fs.copyFileSync(
+        path.join(fontDirectory, file),
+        path.join(publicDir, file),
+      );
     fontHashes[file] = sha256(path.join(publicDir, file));
   }
   writeTailSignal(path.join(publicDir, "tail-signal.wav"));
@@ -145,7 +156,7 @@ async function main() {
   const audioTest = audioCoverage(0.004, 1.004);
   fs.writeFileSync(
     path.join(directory, "plans.json"),
-    JSON.stringify({ plans, audioTest }, null, 2),
+    JSON.stringify({ plans, audioTest, chineseFontFormat }, null, 2),
   );
   const entry = path.join(directory, "entry.tsx");
   fs.writeFileSync(
@@ -326,6 +337,7 @@ async function main() {
     ),
     evalsSha256: sha256(path.join(__dirname, "../evals.json")),
     fontHashes,
+    fontFormats: { "chinese.ttf": chineseFontFormat },
     unitTests: {
       count: Number(unitOutput.match(/# tests (\d+)/)[1]),
       passed: Number(unitOutput.match(/# pass (\d+)/)[1]),
@@ -349,6 +361,7 @@ async function main() {
         "timing.cjs",
         "batch-output.cjs",
         "split-transcript.cjs",
+        "font-format.cjs",
         "../../assets/template/VideoChrome.tsx",
         "../../assets/template/video-style.ts",
         "../../assets/template/grid-motion.ts",

@@ -132,7 +132,7 @@ export type LocalVideoFont = {
   path: string;
   weight: string;
   style?: "normal" | "italic";
-  format?: "woff2" | "woff" | "truetype" | "opentype";
+  format?: "woff2" | "woff" | "truetype" | "opentype" | "collection";
 };
 
 type FontLoadResult =

@@ -9,18 +9,28 @@ import {
 } from "remotion";
 import { KnowledgeBackground } from "../../assets/template/VideoChrome";
 import {
+  type LocalVideoFont,
   VIDEO_FONT_ROLES,
   VIDEO_STYLE,
   useLocalVideoFonts,
 } from "../../assets/template/video-style";
 import { stateAt } from "./timing.cjs";
 
-const fontSources = [
-  { role: "title", path: "title.woff2", weight: "700" },
-  { role: "body", path: "body.woff2", weight: "500" },
-  { role: "chinese", path: "chinese.ttf", weight: "400 700" },
-  { role: "mono", path: "mono.woff2", weight: "500" },
-] as const;
+type ChineseFontFormat = "truetype" | "collection";
+
+export const fontSourcesFor = (
+  chineseFontFormat: ChineseFontFormat,
+): readonly LocalVideoFont[] => [
+  { role: "title", path: "title.woff2", weight: "700", format: "woff2" },
+  { role: "body", path: "body.woff2", weight: "500", format: "woff2" },
+  {
+    role: "chinese",
+    path: "chinese.ttf",
+    weight: "400 700",
+    format: chineseFontFormat,
+  },
+  { role: "mono", path: "mono.woff2", weight: "500", format: "woff2" },
+];
 
 type Plan = {
   id: string;
@@ -156,8 +166,14 @@ export function Diagram({
   );
 }
 
-export function Clip({ plan }: { plan: Plan }) {
-  useLocalVideoFonts(VIDEO_FONT_ROLES, fontSources);
+export function Clip({
+  plan,
+  chineseFontFormat,
+}: {
+  plan: Plan;
+  chineseFontFormat: ChineseFontFormat;
+}) {
+  useLocalVideoFonts(VIDEO_FONT_ROLES, fontSourcesFor(chineseFontFormat));
   const state = stateAt(useCurrentFrame(), plan);
   return (
     <AbsoluteFill>
@@ -205,9 +221,11 @@ export function AudioCoverageClip({ startFrame }: { startFrame: number }) {
 export function RenderRoot({
   plans,
   audioTest,
+  chineseFontFormat,
 }: {
   plans: Plan[];
   audioTest: { startFrame: number; totalFrames: number };
+  chineseFontFormat: ChineseFontFormat;
 }) {
   return (
     <>
@@ -220,7 +238,7 @@ export function RenderRoot({
           height={360}
           fps={plan.fps}
           durationInFrames={plan.totalFrames}
-          defaultProps={{ plan }}
+          defaultProps={{ plan, chineseFontFormat }}
         />
       ))}
       <Composition

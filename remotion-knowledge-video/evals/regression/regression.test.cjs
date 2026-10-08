@@ -7,6 +7,7 @@ const { spawnSync } = require("node:child_process");
 const { splitTranscript } = require("./split-transcript.cjs");
 const { frameAt, audioCoverage, buildPlans, stateAt } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
+const { detectChineseFontFormat } = require("./font-format.cjs");
 const ts = require("typescript");
 const React = require("react");
 
@@ -36,7 +37,52 @@ function loadClip() {
   }
 }
 
-const { Diagram } = loadClip();
+const { Diagram, fontSourcesFor, RenderRoot } = loadClip();
+
+test("Chinese font headers select the actual TTF or TTC loader format", () => {
+  for (const [signature, expected] of [
+    [Buffer.from([0, 1, 0, 0]), "truetype"],
+    [Buffer.from("true"), "truetype"],
+    [Buffer.from("ttcf"), "collection"],
+  ]) {
+    const data = Buffer.concat([signature, Buffer.alloc(8)]);
+    const format = detectChineseFontFormat(data);
+    assert.equal(format, expected);
+    const sources = fontSourcesFor(format);
+    assert.equal(
+      sources.find((source) => source.role === "chinese").format,
+      expected,
+    );
+    assert.ok(
+      sources
+        .filter((source) => source.role !== "chinese")
+        .every((source) => source.format === "woff2"),
+    );
+    const root = RenderRoot({
+      plans: [{ id: "Probe", fps: 60, totalFrames: 1 }],
+      audioTest: { startFrame: 0, totalFrames: 1 },
+      chineseFontFormat: format,
+    });
+    const clip = root.props.children[0][0];
+    assert.equal(clip.props.defaultProps.chineseFontFormat, expected);
+  }
+});
+
+test("unsupported and truncated Chinese font inputs fail instead of claiming WOFF2", () => {
+  for (const data of [
+    Buffer.alloc(0),
+    Buffer.from("ttcf"),
+    Buffer.from([0xf4, 0xf4, 0xe3, 0xe6, ...Array(8).fill(0)]),
+    ...["wOF2", "wOFF", "OTTO", "<htm"].map((signature) =>
+      Buffer.concat([Buffer.from(signature), Buffer.alloc(8)]),
+    ),
+  ]) {
+    assert.throws(
+      () => detectChineseFontFormat(data),
+      /TrueType font or TTC collection/,
+    );
+  }
+});
 
 function textOpacities(element, opacity = 1, labels = new Map()) {
   React.Children.forEach(element, (child) => {

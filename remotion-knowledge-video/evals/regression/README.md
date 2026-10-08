@@ -13,7 +13,7 @@ npm run check --prefix SKILL_PATH/evals/regression
 node SKILL_PATH/evals/regression/render.cjs OUTPUT_PARENT FONT_DIRECTORY
 ```
 
-将大写占位符替换成实际路径。字体目录需要实际可用的 `title.woff2`、`body.woff2`、`chinese.ttf`、`mono.woff2`，分别映射模板四个字体角色。本次英文可用本项目已有的 Space Grotesk / Inter / JetBrains Mono，中文使用本地宋体；`chinese.ttf` 也接受浏览器支持的本地 TTC 集合。字体仅为测试准备在输出工作区，不随技能分发，不依赖到其他项目的符号链接。缺失字体时明确失败，结果保存实际文件哈希。
+将大写占位符替换成实际路径。字体目录需要实际可用的 `title.woff2`、`body.woff2`、`chinese.ttf`、`mono.woff2`，分别映射模板四个字体角色。本次英文可用本项目已有的 Space Grotesk / Inter / JetBrains Mono，中文使用本地宋体；`chinese.ttf` 也接受浏览器支持的本地 TTC 集合。渲染器检查中文字体的文件头：单字体 TTF 传入 `truetype`，以 `ttcf` 开头的集合传入 `collection`，不根据重命名后的扩展名猜测。两者使用 [CSS 字体规范的格式提示](https://www.w3.org/TR/css-fonts-4/#font-format-definitions)；不支持或过短的输入在建立渲染批次前报错，浏览器加载失败也会终止渲染。字体仅为测试准备在输出工作区，不随技能分发，不依赖到其他项目的符号链接。缺失字体时明确失败，结果保存实际文件哈希和中文字体格式。
 
 快速检查覆盖：原稿源位置与顺序、已知 YAML 元数据、开头横线但无 YAML、YAML 形状的口播与 BOM/CRLF 变体、混合字段与错误值类型、两种代码围栏、HTML/引用/列表/缩进代码、嵌套列表与引用口播的顺序及实际计划、Setext、空段与标题段；30/60/59.94 fps 非整帧音频末尾、整帧音频和额外尾段的浮点噪声、真实正小数跨度与正的极短跨度、绝对边界取整；实际动画消费的逐词进度、实际图解元素树中结果标签的有效透明度、逐帧前景 hold 与模板实际背景计算的逐帧 hold；新批次输出重名保护；整批计划新增、删除、重排或改动时在渲染和写入前拒绝恢复；首段完成前已绑定完整计划；失败段单独重试。包含“全部动作一开始就完成”的负向样本，确认检查器会拒绝。
 
