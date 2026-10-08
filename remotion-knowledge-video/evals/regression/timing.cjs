@@ -2,6 +2,16 @@ const FPS = 60;
 const clamp = (value) => Math.max(0, Math.min(1, value));
 const frameAt = (seconds, fps = FPS) => Math.round(seconds * fps);
 
+function ceilFrameSpan(seconds, fps) {
+  const frames = seconds * fps;
+  const nearest = Math.round(frames);
+  const tolerance = 4 * Number.EPSILON * Math.max(1, Math.abs(frames));
+  // Correct only roundoff near a positive integer; keep positive sub-frame spans.
+  const stableFrames =
+    nearest > 0 && Math.abs(frames - nearest) <= tolerance ? nearest : frames;
+  return Math.ceil(stableFrames);
+}
+
 function audioCoverage(
   audioStartSeconds,
   retainedAudioSeconds,
@@ -22,7 +32,8 @@ function audioCoverage(
   return {
     startFrame,
     placedEndSeconds,
-    totalFrames: Math.ceil((placedEndSeconds + extraTailSeconds) * fps),
+    totalFrames:
+      startFrame + ceilFrameSpan(retainedAudioSeconds + extraTailSeconds, fps),
   };
 }
 
