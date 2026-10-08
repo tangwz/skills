@@ -72,17 +72,29 @@ estimatedSeconds = chineseSpokenCharacters / chineseCharactersPerSecond
 
 ## 帧换算与检查
 
-内部场景与动作按实际共用 fps 四舍五入全局绝对边界，从相邻边界求时长，避免各段分别取整后累积偏差。录音的最终结束边界向上取整，保证最后不足一帧的声音也被覆盖；采用实际音频挂载起始帧，不能先用未取整的偏移计算总长：
+内部场景与动作按实际共用 fps 四舍五入全局绝对边界，从相邻边界求时长，避免各段分别取整后累积偏差。录音的最终覆盖帧数从实际挂载起始帧加上音频与已声明尾段的帧跨度：跨度先消除正整数边界附近数个浮点精度单位的误差，再向上取整，保证最后不足一帧的声音也被覆盖。不要把整数起点换回秒后再相乘，或先用未取整的偏移计算总长；不能用固定毫秒容差把真实尾音吸附掉。
 
 ```ts
+function ceilFrameSpan(seconds: number, fps: number) {
+  const frames = seconds * fps;
+  const nearest = Math.round(frames);
+  const tolerance = 4 * Number.EPSILON * Math.max(1, Math.abs(frames));
+  const stableFrames =
+    nearest > 0 && Math.abs(frames - nearest) <= tolerance ? nearest : frames;
+  return Math.ceil(stableFrames);
+}
+
 const startFrame = Math.round(startSeconds * fps);
 const endFrame = Math.round(endSeconds * fps);
 const durationInFrames = endFrame - startFrame;
 const cueFrame = Math.round(globalCueSeconds * fps);
 const audioStartFrame = Math.round(audioStartSeconds * fps);
 const placedAudioEndSeconds = audioStartFrame / fps + retainedAudioSeconds;
-const totalFrames = Math.ceil((placedAudioEndSeconds + extraTailSeconds) * fps);
+const totalFrames =
+  audioStartFrame + ceilFrameSpan(retainedAudioSeconds + extraTailSeconds, fps);
 ```
+
+例如 `31 / 60` 秒在 60 fps 下就是 31 帧，不能因乘积的浮点噪声变成 32 帧；真正超出帧边界的音频或尾段仍应向上补足一帧。正的不足一帧跨度也不能吸附为零。
 
 若片尾视觉还有单独的已声明结束边界，取它与音频覆盖帧数的最大值。只有稿件时总长可四舍五入中心估计，最后一个场景结束于注册总帧数。有录音时，最后场景也使用最终覆盖帧数，不能继续停在四舍五入的旧总长。音频子 `Sequence` 的可见区间与裁取设置同样应覆盖保留的音频，不能只延长空白视频。
 

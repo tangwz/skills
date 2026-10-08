@@ -151,6 +151,57 @@ test("nested rules, code, HTML and Setext underlines do not create clips", async
   }
 });
 
+test("nested list and quote paragraphs preserve narration order while excluding code and HTML", async () => {
+  const source = fixture("nested-narration.md");
+  const { sections } = await splitTranscript(source);
+  assert.equal(sections.length, 3);
+  assert.deepEqual(
+    sections.map((section) => section.paragraphs),
+    [
+      ["First list sentence.", "Nested list sentence.", "Last list sentence."],
+      [
+        "First quoted sentence.",
+        "Quoted list sentence.",
+        "Last quoted sentence.",
+      ],
+      ["Final list sentence.", "Final continuation."],
+    ],
+  );
+  for (const section of sections) {
+    assert.equal(section.raw, source.slice(section.start, section.end));
+  }
+});
+
+test("list-only and quote-only narration still produces all three timed plans", async () => {
+  const original = await splitTranscript(fixture("transcript.md"));
+  const originalPlans = buildPlans(original.sections);
+  const nestedSource = originalPlans
+    .map((plan, index) => {
+      const lines = plan.spokenText.split("\n");
+      const body =
+        index === 0
+          ? lines.map((line) => `- ${line}`).join("\n\n")
+          : lines
+              .map((line) => `${index === 1 ? "> " : "> - "}${line}`)
+              .join("\n>\n") + "\n>\n> ---";
+      return `# ${plan.title}\n\n${body}`;
+    })
+    .join("\n\n---\n\n");
+  const nested = await splitTranscript(nestedSource);
+  const summary = (plans) =>
+    plans.map(({ id, title, spokenText, cues, totalFrames }) => ({
+      id,
+      title,
+      spokenText,
+      cues,
+      totalFrames,
+    }));
+  assert.deepEqual(
+    summary(buildPlans(nested.sections)),
+    summary(originalPlans),
+  );
+});
+
 test("no rule means one clip; heading-only segments have no invented speech", async () => {
   const single = await splitTranscript("One spoken paragraph.\n");
   assert.equal(single.sections.length, 1);
@@ -208,6 +259,58 @@ test("fractional audio ends are covered at 30, 60 and 59.94 fps", () => {
     assert.throws(() => audioCoverage(0, -1, fps));
   }
   assert.ok(frameAt(12.004, 60) / 60 < 12.004);
+});
+
+test("frame-aligned audio and tails do not acquire a roundoff frame", () => {
+  for (const fps of [30, 60, 59.94]) {
+    for (const frames of [1, 2, 7, 31, 97, 131, 241, 997, 4096, 65535]) {
+      for (const offset of [0, 0.004, 0.8, 12000.123]) {
+        for (const tailFrames of [0, 1, 31]) {
+          const timing = audioCoverage(
+            offset,
+            frames / fps,
+            fps,
+            tailFrames / fps,
+          );
+          assert.equal(
+            timing.totalFrames,
+            timing.startFrame + frames + tailFrames,
+          );
+        }
+      }
+    }
+  }
+  assert.equal(audioCoverage(0, 31 / 60, 60).totalFrames, 31);
+});
+
+test("genuine fractional audio and declared tails still round up", () => {
+  for (const fps of [30, 60, 59.94]) {
+    for (const frames of [1, 31, 241, 997]) {
+      for (const fraction of [1e-8, 0.001, 0.24, 0.99999999]) {
+        for (const offset of [0, 0.004, 0.8, 12000.123]) {
+          const audio = audioCoverage(offset, (frames + fraction) / fps, fps);
+          const tail = audioCoverage(offset, frames / fps, fps, fraction / fps);
+          assert.equal(audio.totalFrames, audio.startFrame + frames + 1);
+          assert.equal(tail.totalFrames, tail.startFrame + frames + 1);
+        }
+      }
+    }
+  }
+});
+
+test("a positive sub-frame span cannot be rounded to zero", () => {
+  for (const fps of [30, 60, 59.94]) {
+    for (const offset of [0, 0.004, 0.8, 12000.123]) {
+      for (const seconds of [Number.EPSILON / 100, 1e-10, 1 / 48000]) {
+        const audio = audioCoverage(offset, seconds, fps);
+        const tail = audioCoverage(offset, 0, fps, seconds);
+        assert.equal(audio.totalFrames, audio.startFrame + 1);
+        assert.equal(tail.totalFrames, tail.startFrame + 1);
+      }
+      const empty = audioCoverage(offset, 0, fps);
+      assert.equal(empty.totalFrames, empty.startFrame);
+    }
+  }
 });
 
 test("absolute cue boundaries avoid accumulated segment rounding", () => {
