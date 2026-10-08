@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { splitTranscript } = require("./split-transcript.cjs");
 const { frameAt, audioCoverage, buildPlans, stateAt } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
@@ -403,6 +404,183 @@ test("a legacy manifest without the full plan identity fails without mutation", 
     );
     assert.equal(rendered, false);
     assert.equal(fs.readFileSync(manifestPath, "utf8"), before);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+function interruptPublication(directory, plans, phase) {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const { renderBatch } = require(process.argv[1]);
+        const directory = process.argv[2];
+        const plans = JSON.parse(process.argv[3]);
+        const phase = process.argv[4];
+        const target = path.join(directory, "Test-2.mp4");
+        const manifestTemporary = path.join(directory, "manifest.json.pending");
+        const rename = fs.renameSync;
+        fs.renameSync = (from, to) => {
+          if (to === target && phase === "before-publish") process.exit(91);
+          rename(from, to);
+          if (to === target && phase === "after-publish") process.exit(91);
+        };
+        const write = fs.writeFileSync;
+        fs.writeFileSync = (file, data, ...options) => {
+          if (file === manifestTemporary && phase === "during-completion-save" &&
+              JSON.parse(data).clips["Test-2"]?.status === "complete") {
+            write(file, '{"clips":');
+            process.exit(91);
+          }
+          return write(file, data, ...options);
+        };
+        renderBatch(
+          directory,
+          plans,
+          async (plan, file) => fs.writeFileSync(file, plan.id),
+          async () => ({ decoded: true }),
+        ).catch((error) => { console.error(error); process.exitCode = 1; });
+      `,
+      require.resolve("./batch-output.cjs"),
+      directory,
+      JSON.stringify(plans),
+      phase,
+    ],
+    { encoding: "utf8", timeout: 10000 },
+  );
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 91, child.stderr);
+}
+
+for (const phase of [
+  "before-publish",
+  "after-publish",
+  "during-completion-save",
+]) {
+  test(`a process exit ${phase} resumes without re-encoding verified clips`, async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-publish-"));
+    const plans = [1, 2, 3].map((order) => ({ id: `Test-${order}` }));
+    try {
+      const directory = reserveBatch(parent, "sample");
+      interruptPublication(directory, plans, phase);
+      const manifestPath = path.join(directory, "manifest.json");
+      const checkpoint = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      assert.equal(checkpoint.clips["Test-1"].status, "complete");
+      assert.equal(checkpoint.clips["Test-2"].status, "ready");
+      assert.equal(checkpoint.clips["Test-3"], undefined);
+      const firstHash = sha256(path.join(directory, "Test-1.mp4"));
+      const candidate = path.join(
+        directory,
+        phase === "before-publish" ? "Test-2.pending.mp4" : "Test-2.mp4",
+      );
+      const secondHash = sha256(candidate);
+      const rendered = [];
+      const verified = [];
+      const manifest = await renderBatch(
+        directory,
+        plans,
+        async (plan, file) => {
+          rendered.push(plan.id);
+          fs.writeFileSync(file, plan.id);
+        },
+        async (plan) => {
+          verified.push(plan.id);
+          return { decoded: true };
+        },
+      );
+      assert.deepEqual(rendered, ["Test-3"]);
+      assert.deepEqual(verified, ["Test-3"]);
+      assert.equal(sha256(path.join(directory, "Test-1.mp4")), firstHash);
+      assert.equal(sha256(path.join(directory, "Test-2.mp4")), secondHash);
+      for (const plan of plans) {
+        assert.equal(manifest.clips[plan.id].status, "complete");
+        assert.equal(manifest.clips[plan.id].media.decoded, true);
+      }
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(manifestPath, "utf8")),
+        manifest,
+      );
+      assert.ok(
+        !fs.readdirSync(directory).some((file) => file.includes(".pending")),
+      );
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const phase of ["before-publish", "after-publish"]) {
+  test(`a changed ready file from ${phase} is rejected without mutation`, async () => {
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-ready-hash-"),
+    );
+    const plans = [1, 2, 3].map((order) => ({ id: `Test-${order}` }));
+    try {
+      const directory = reserveBatch(parent, "sample");
+      interruptPublication(directory, plans, phase);
+      const candidate = path.join(
+        directory,
+        phase === "before-publish" ? "Test-2.pending.mp4" : "Test-2.mp4",
+      );
+      fs.writeFileSync(candidate, "changed externally");
+      const snapshot = () =>
+        Object.fromEntries(
+          fs
+            .readdirSync(directory)
+            .map((file) => [file, sha256(path.join(directory, file))]),
+        );
+      const before = snapshot();
+      await assert.rejects(
+        () =>
+          renderBatch(
+            directory,
+            plans,
+            async () => assert.fail("Unexpected render"),
+            async () => assert.fail("Unexpected verification"),
+          ),
+        /Ready output is missing or changed/,
+      );
+      assert.deepEqual(snapshot(), before);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a final file without a verified ready record cannot be adopted", async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-untracked-"));
+  const plans = [{ id: "Test-1" }];
+  try {
+    const directory = reserveBatch(parent, "sample");
+    await renderBatch(
+      directory,
+      plans,
+      async () => {
+        throw new Error("Injected render failure");
+      },
+      async () => ({}),
+    );
+    const file = path.join(directory, "Test-1.mp4");
+    fs.writeFileSync(file, "untracked output");
+    const manifestPath = path.join(directory, "manifest.json");
+    const manifestHash = sha256(manifestPath);
+    const fileHash = sha256(file);
+    await assert.rejects(
+      () =>
+        renderBatch(
+          directory,
+          plans,
+          async () => assert.fail("Unexpected render"),
+          async () => assert.fail("Unexpected verification"),
+        ),
+      /Refusing to overwrite an untracked output/,
+    );
+    assert.equal(sha256(file), fileHash);
+    assert.equal(sha256(manifestPath), manifestHash);
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }

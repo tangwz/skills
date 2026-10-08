@@ -36,8 +36,21 @@ async function renderBatch(directory, plans, render, verify) {
       "Batch plan changed or is unverifiable; reserve a new batch",
     );
   }
-  const saveManifest = () =>
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+  const saveManifest = () => {
+    const pendingManifest = `${manifestPath}.pending`;
+    fs.writeFileSync(pendingManifest, JSON.stringify(manifest, null, 2) + "\n");
+    fs.renameSync(pendingManifest, manifestPath);
+  };
+  const completeReadyClip = (plan, entry, file, pending) => {
+    const alreadyPublished = fs.existsSync(file);
+    const candidate = alreadyPublished ? file : pending;
+    if (!fs.existsSync(candidate) || sha256(candidate) !== entry.sha256) {
+      throw new Error("Ready output is missing or changed");
+    }
+    if (!alreadyPublished) fs.renameSync(pending, file);
+    manifest.clips[plan.id] = { ...entry, status: "complete" };
+    saveManifest();
+  };
   // Register the entire ordered plan before rendering can be interrupted.
   if (!hasManifest) saveManifest();
   for (const plan of plans) {
@@ -56,20 +69,25 @@ async function renderBatch(directory, plans, render, verify) {
       }
       continue;
     }
+    const pending = path.join(directory, `${plan.id}.pending.mp4`);
+    if (previous?.status === "ready") {
+      completeReadyClip(plan, previous, file, pending);
+      continue;
+    }
     if (fs.existsSync(file))
       throw new Error("Refusing to overwrite an untracked output");
-    const pending = path.join(directory, `${plan.id}.pending.mp4`);
     try {
       await render(plan, pending);
       const media = await verify(plan, pending);
-      fs.renameSync(pending, file);
       manifest.clips[plan.id] = {
-        status: "complete",
+        status: "ready",
         inputSha256,
         file,
-        sha256: sha256(file),
+        sha256: sha256(pending),
         media,
       };
+      // Persist verified bytes before publication so either filename is recoverable.
+      saveManifest();
     } catch (error) {
       fs.rmSync(pending, { force: true });
       manifest.clips[plan.id] = {
@@ -77,8 +95,11 @@ async function renderBatch(directory, plans, render, verify) {
         inputSha256,
         error: error.message,
       };
+      saveManifest();
+      continue;
     }
-    saveManifest();
+    // Publication errors must leave the persisted ready record intact for retry.
+    completeReadyClip(plan, manifest.clips[plan.id], file, pending);
   }
   return manifest;
 }
