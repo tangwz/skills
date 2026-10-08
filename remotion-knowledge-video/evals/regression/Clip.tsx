@@ -32,7 +32,13 @@ type Plan = {
   cues: { phrase: string; startFrame: number; targetSeconds: number }[];
 };
 
-function Diagram({ kind, actions }: { kind: string; actions: number[] }) {
+export function Diagram({
+  kind,
+  actions,
+}: {
+  kind: string;
+  actions: number[];
+}) {
   const { ink, muted, cyan, orange } = VIDEO_STYLE.colors;
   const label = (x: number, y: number, value: string, color = muted) => (
     <text x={x} y={y} fill={color} textAnchor="middle" fontSize={42}>
@@ -72,9 +78,9 @@ function Diagram({ kind, actions }: { kind: string; actions: number[] }) {
               fill={cyan}
             />
           ))}
+          {label(1190, 705, "512 features")}
         </g>
         {label(355, 705, "128 features")}
-        {label(1190, 705, "512 features")}
         <g opacity={actions[1]}>
           {label(960, 845, "Same token count", orange)}
         </g>
@@ -90,14 +96,15 @@ function Diagram({ kind, actions }: { kind: string; actions: number[] }) {
           strokeWidth={4}
           fill="none"
         />
-        <path
-          d="M 330 680 H 490 L 830 340"
-          stroke={cyan}
-          strokeWidth={10}
-          fill="none"
-          opacity={actions[0]}
-        />
-        {label(570, 780, "ReLU(x) = max(0, x)")}
+        <g opacity={actions[0]}>
+          <path
+            d="M 330 680 H 490 L 830 340"
+            stroke={cyan}
+            strokeWidth={10}
+            fill="none"
+          />
+          {label(570, 780, "ReLU(x) = max(0, x)")}
+        </g>
         <g opacity={actions[1]}>
           {label(1280, 455, "Without activation")}
           {label(1280, 545, "W2(W1x + b1) + b2", ink)}
