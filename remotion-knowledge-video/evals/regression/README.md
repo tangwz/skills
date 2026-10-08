@@ -1,0 +1,22 @@
+# 分段与口播时序回归
+
+这里是确定性测试作品与检查器，覆盖推荐实现路径，不是通用内容生成器，也不是技能与基线的独立对照评测。不给产物生成 agent 提供本目录或评分断言。
+
+环境使用本目录 `package.json` 的固定版本。可复用目标项目相同版本的依赖，或单独安装；完整渲染还需要可执行的 `ffmpeg` / `ffprobe`、Remotion 浏览器及允许本地端口监听的环境。
+
+```sh
+npm install --prefix SKILL_PATH/evals/regression
+node --test SKILL_PATH/evals/regression/regression.test.cjs
+npm run check --prefix SKILL_PATH/evals/regression
+node SKILL_PATH/evals/regression/render.cjs OUTPUT_PARENT FONT_DIRECTORY
+```
+
+将大写占位符替换成实际路径。字体目录需要实际可用的 `title.woff2`、`body.woff2`、`chinese.ttf`、`mono.woff2`，分别映射模板四个字体角色。本次英文可用本项目已有的 Space Grotesk / Inter / JetBrains Mono，中文使用本地宋体；`chinese.ttf` 也接受浏览器支持的本地 TTC 集合。字体仅为测试准备在输出工作区，不随技能分发，不依赖到其他项目的符号链接。缺失字体时明确失败，结果保存实际文件哈希。
+
+快速检查覆盖：原稿源位置与顺序、合法 YAML、开头横线但无 YAML、两种代码围栏、HTML/引用/列表/缩进代码、Setext、空段与标题段；30/60/59.94 fps 非整帧音频末尾、绝对边界取整；实际动画消费的逐词进度、逐帧前景 hold 与模板实际背景计算的逐帧 hold；新批次输出重名保护；输入变化拒绝复用旧输出；失败段单独重试。包含“全部动作一开始就完成”的负向样本，确认检查器会拒绝。
+
+完整检查从冻结原稿建立三个独立计划与 Composition，编码三份不同的 640×360、60 fps MP4，逐文件读取帧数/时长并完整解码。人为使第二段第一次渲染失败，保留第一、第三段，重试只编码第二段，比较其他文件哈希。抽取开始、各关键动作前后、中段和 hold 边界的 PNG，并比较 hold 首尾像素；前景另有逐帧状态检查，不能将两张 PNG 描述为背景全区间逐帧像素证明。
+
+另外用 1.004 秒的合成音轨测试向上取整。只有最后 4 毫秒有信号；先经 Remotion 无损混音，再由 FFmpeg 一次 AAC 编码并封装 MP4，重新解码检查预期尾段仍有信号，避免仅证明视频比音频长却没有验证实际音频保留。测试音轨在独立的 `audio-coverage/` 子目录，三份正文输出仍在批次根目录。这个信号不模拟用户的旁白，也不证明其他音轨编码路径具有相同延迟。
+
+每次运行创建新输出目录，保留 `plans.json`、`manifest.json`、MP4、关键帧与自动生成的 `report.json`。报告记录输入/评分文件/字体哈希、估时假设、实际媒体指标、重试与音轨尾部检查。报告不自动填写主观布局质量或技能/基线成绩；渲染后仍应检查关键帧可读性。本测试没有真实口播，不能证明声音同步或个人语速准确。

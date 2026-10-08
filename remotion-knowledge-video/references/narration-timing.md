@@ -42,6 +42,8 @@ videoEndSeconds = audioStartSeconds + retainedAudioSeconds + extraTailSeconds
 
 没有样本时，先用中文每秒 4 个可读字、英文每秒 2.5 个词作为可调整的工作假设，并单独估算停顿。逗号可暂按 0.2 秒，句末 0.4 秒，段间 0.6 秒；同一个边界取一种停顿，不重复累加。以语速上下浮动约 15% 给出对应的快、慢时长范围。这些是未校准的初估，不是用户实际语速或准确率承诺；公式、新术语等段落应按明确的口头读法和预期停顿修正。
 
+用户明确使用唐师兄频道且没有更可靠的本期时间依据时，可读取 [频道语速参考](speaker-profiles/tang-shixiong.md)，按其口径给出暂定预算与范围。其他频道不默认继承这个个人样本。字幕时轴只能提供代理估计；记录样本区间、实际念法计数、停顿是否已包含及未核对部分，不能仅凭整片时长推断语速。
+
 ```text
 estimatedSeconds = chineseSpokenCharacters / chineseCharactersPerSecond
                  + englishSpokenWords / englishWordsPerSecond
@@ -70,20 +72,26 @@ estimatedSeconds = chineseSpokenCharacters / chineseCharactersPerSecond
 
 ## 帧换算与检查
 
-按实际共用 fps 换算全局绝对边界，从相邻边界求时长，避免各段分别取整后累积偏差：
+内部场景与动作按实际共用 fps 四舍五入全局绝对边界，从相邻边界求时长，避免各段分别取整后累积偏差。录音的最终结束边界向上取整，保证最后不足一帧的声音也被覆盖；采用实际音频挂载起始帧，不能先用未取整的偏移计算总长：
 
 ```ts
 const startFrame = Math.round(startSeconds * fps);
 const endFrame = Math.round(endSeconds * fps);
 const durationInFrames = endFrame - startFrame;
 const cueFrame = Math.round(globalCueSeconds * fps);
-const totalFrames = Math.round(videoEndSeconds * fps);
+const audioStartFrame = Math.round(audioStartSeconds * fps);
+const placedAudioEndSeconds = audioStartFrame / fps + retainedAudioSeconds;
+const totalFrames = Math.ceil((placedAudioEndSeconds + extraTailSeconds) * fps);
 ```
+
+若片尾视觉还有单独的已声明结束边界，取它与音频覆盖帧数的最大值。只有稿件时总长可四舍五入中心估计，最后一个场景结束于注册总帧数。有录音时，最后场景也使用最终覆盖帧数，不能继续停在四舍五入的旧总长。音频子 `Sequence` 的可见区间与裁取设置同样应覆盖保留的音频，不能只延长空白视频。
 
 遇到同帧短段时合并视觉区间或共享画面，不为每个短词强行创建一个 `Sequence`。修改段落或换用录音时重算该段和后续边界；只改最后的总帧数不能修正中间漂移。可通过项目支持的元数据计算入口按实际音频时长注册 Composition，或者让同一份时序数据决定注册帧数和场景，避免维护两套总长。
 
-- **总长**：实测录音/给定时码加已声明的前后偏移与额外画面时间，和注册时长的取整误差不超过一个视频帧。额外画面时间不能用来掩盖无信息拖尾。只有稿件时按估算中心核对预算，不把它称为实测误差。
+- **总长**：以实际挂载起点、保留音频时长与已声明额外画面预算核对；覆盖结束时点的向上取整误差小于一个视频帧。音频挂载点相对用户秒级偏移的四舍五入误差另行记录，通常不超过半帧。额外画面时间不能用来掩盖无信息拖尾。只有稿件时按估算中心核对预算，不把它称为实测误差。
 - **进度**：检查所有场景边界和关键讲解词；至少连贯复查开场、中段、结尾。已确认锚点与其指定的动作目标默认相差不超过 0.3 秒；项目或用户更严格时采用其要求。此容差用于动作目标，不要求整个复杂动画在 0.3 秒内结束。
 - **结尾**：总结期间画面已经落定，保留最后一句和所需停顿，音频不被 Composition 截断；没有重复追加片头、片尾或静止阅读时间。
 
 有音频时用 Studio 或带音轨的片段试听，静帧、容器时长和状态测试都不能证明声音同步。按给定时码做检查时注明未试听；未能使用录音验证的部分明确标为待核对。交付逐段时序表、时间依据、口播时长、视频时长、差值与差值来源，说明录音到位后哪些估算需要替换。
+
+编码验收同时检查视频流、音频流和容器时长；AAC 填充或编码延迟可能使它们不同。不要把编码后的延迟反向加入口播内容预算，也不能只测视频流便断言音轨没有截断。发现信号位移或尾音异常时，定位输入裁取、混音与最终编码步骤；项目支持时可保留无损混音后一次编码最终音轨，再核对成片中的开头和末尾。

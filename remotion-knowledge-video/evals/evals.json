@@ -147,7 +147,7 @@
     },
     {
       "id": 7,
-      "prompt": "Use the attached full Markdown transcript to make a batch of explainer videos. Each top-level Markdown horizontal rule separates different video files; preserve the original order and wording. Front matter is metadata, headings are visual titles, and the parenthetical stage directions and code examples are not spoken. Skip empty sections. There is no recording or personal reading-rate sample yet: estimate the spoken duration of each section separately and explain your assumptions. Use one channel style at 60 fps; for this review, render at 640 by 360. Do not add a channel opener or end card to every section and do not generate narration or explanatory captions. Deliver editable compositions and an actual separate MP4 for each nonempty narration section, with a source-section-to-file list, estimated and encoded durations, and decoding checks. I need the individual files for editing together later.",
+      "prompt": "Use the attached full Markdown transcript to make a batch of explainer videos. Each top-level Markdown horizontal rule separates different video files; preserve the original order and wording. Front matter is metadata, headings are visual titles, and the parenthetical stage directions and code examples are not spoken. Skip empty sections. There is no recording or personal reading-rate sample yet: estimate the spoken duration of each section separately and explain your assumptions. Plan when the key phrases are spoken and make the matching visual steps begin there, rather than finishing all steps at the start and holding the result. Include checks of the animation states that are actually rendered, before and during those steps. Use one channel style at 60 fps; for this review, render at 640 by 360. Do not add a channel opener or end card to every section and do not generate narration or explanatory captions. Deliver editable compositions and an actual separate MP4 for each nonempty narration section, with a source-section-to-file list, estimated and encoded durations, and decoding checks. I need the individual files for editing together later.",
       "expected_output": "Three distinct playable MP4 files and three independently registered animations for expansion, nonlinear activation, and projection, in source order. Metadata, code-fence rules, the Setext heading underline, and empty sections do not create videos. Each file follows its own spoken-time budget; all three use the same visual style and 60 fps.",
       "files": ["evals/fixtures/batch-transcript/transcript.md"],
       "expectations": [
@@ -161,6 +161,12 @@
         "The central duration budget of each clip is explained by that section's spoken content and declared pauses.",
         "Unspoken metadata, headings, stage directions and code examples are excluded from the narration estimates.",
         "Each encoded duration agrees with its own declared budget within one video frame.",
+        "The expansion step starts within 0.3 seconds of its declared estimated spoken phrase.",
+        "The activation step starts within 0.3 seconds of its declared estimated spoken phrase.",
+        "The projection step starts within 0.3 seconds of its declared estimated spoken phrase.",
+        "The declared phrase times are explained by the spoken prefixes and the same reading-rate and pause assumptions used for duration.",
+        "Checks trace the step progress to animation states consumed by the registered clips rather than to unused timing labels.",
+        "Each clip keeps its later instructional steps unrevealed before their corresponding planned phrases.",
         "All produced videos are encoded at the requested 60 fps.",
         "The same channel colors, typography, and background style are used across all output videos.",
         "No additional unspoken channel opener or end-card time is appended to the sections."
