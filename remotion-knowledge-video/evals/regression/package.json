@@ -1,6 +1,9 @@
 {
   "name": "knowledge-video-regression",
   "private": true,
+  "engines": {
+    "node": "^18.15.0 || >=20.0.0"
+  },
   "scripts": {
     "test": "node --test regression.test.cjs",
     "check": "tsc --noEmit -p tsconfig.json",

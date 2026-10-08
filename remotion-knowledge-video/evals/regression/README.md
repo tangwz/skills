@@ -2,10 +2,12 @@
 
 这里是确定性测试作品与检查器，覆盖推荐实现路径，不是通用内容生成器，也不是技能与基线的独立对照评测。不给产物生成 agent 提供本目录或评分断言。
 
-环境使用本目录 `package.json` 的固定版本。可复用目标项目相同版本的依赖，或单独安装；完整渲染还需要可执行的 `ffmpeg` / `ffprobe`、Remotion 浏览器及允许本地端口监听的环境。
+环境使用本目录 `package.json` 与 `package-lock.json` 锁定的完整依赖树，以 `npm ci` 独立安装后运行。仅直接依赖版本相同，不能证明目标项目的传递依赖也一致；复用项目依赖时应另行记录实际依赖树，不能视为锁文件环境的复现。完整渲染还需要可执行的 `ffmpeg` / `ffprobe`、Remotion 浏览器及允许本地端口监听的环境。
+
+回归包的运行时范围是 Node 18.15+（18.x）或 Node 20+，由 `engines.node` 声明，覆盖锁定依赖的要求及 [Node 的 TAP 输出选项](https://nodejs.org/docs/latest-v18.x/api/cli.html#--test-reporter)。本要求只用于回归工具。
 
 ```sh
-npm install --prefix SKILL_PATH/evals/regression
+npm ci --prefix SKILL_PATH/evals/regression
 node --test SKILL_PATH/evals/regression/regression.test.cjs
 npm run check --prefix SKILL_PATH/evals/regression
 node SKILL_PATH/evals/regression/render.cjs OUTPUT_PARENT FONT_DIRECTORY

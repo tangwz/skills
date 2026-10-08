@@ -160,6 +160,42 @@ test("no rule means one clip; heading-only segments have no invented speech", as
   assert.deepEqual(titleOnly.sections[1].paragraphs, ["Spoken body."]);
 });
 
+test("unspoken heading, stage-direction and code sections do not create extra plans", async () => {
+  const source = fixture("transcript.md");
+  const withUnspoken = source.replace(
+    "# Expansion",
+    [
+      "# Silent chapter",
+      "",
+      "---",
+      "",
+      "(Stage direction only.)",
+      "",
+      "---",
+      "",
+      "~~~text",
+      "value = 512",
+      "~~~",
+      "",
+      "---",
+      "",
+      "# Expansion",
+    ].join("\n"),
+  );
+  assert.notEqual(withUnspoken, source);
+  const original = await splitTranscript(source);
+  const expanded = await splitTranscript(withUnspoken);
+  assert.equal(expanded.sections.length, original.sections.length + 3);
+  const summary = (sections) =>
+    buildPlans(sections).map(({ id, title, spokenText, totalFrames }) => ({
+      id,
+      title,
+      spokenText,
+      totalFrames,
+    }));
+  assert.deepEqual(summary(expanded.sections), summary(original.sections));
+});
+
 test("fractional audio ends are covered at 30, 60 and 59.94 fps", () => {
   for (const fps of [30, 60, 59.94]) {
     for (const seconds of [12.004, 25.501, 38.401]) {
@@ -304,7 +340,7 @@ test("a changed plan cannot silently reuse a completed output", async () => {
 const batchChanges = {
   addition: (plans) => [...plans, { id: "Test-4", duration: 1 }],
   removal: (plans) => plans.slice(0, -1),
-  reordering: (plans) => plans.toReversed(),
+  reordering: (plans) => [...plans].reverse(),
   "later input change": (plans) =>
     plans.map((plan, index) => (index === 2 ? { ...plan, duration: 2 } : plan)),
 };
