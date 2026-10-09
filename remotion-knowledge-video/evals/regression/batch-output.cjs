@@ -48,7 +48,7 @@ async function renderBatch(directory, plans, render, verify) {
       throw new Error("Ready output is missing or changed");
     }
     if (!alreadyPublished) fs.renameSync(pending, file);
-    manifest.clips[plan.id] = { ...entry, status: "complete" };
+    manifest.clips[plan.id] = { ...entry, file, status: "complete" };
     saveManifest();
   };
   // Register the entire ordered plan before rendering can be interrupted.
@@ -59,6 +59,10 @@ async function renderBatch(directory, plans, render, verify) {
     if (previous?.status === "complete") {
       if (!fs.existsSync(file) || sha256(file) !== previous.sha256) {
         throw new Error("Completed output changed");
+      }
+      if (previous.file !== file) {
+        manifest.clips[plan.id] = { ...previous, file };
+        saveManifest();
       }
       continue;
     }
