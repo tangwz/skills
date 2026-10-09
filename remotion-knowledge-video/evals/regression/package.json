@@ -1,0 +1,25 @@
+{
+  "name": "knowledge-video-regression",
+  "private": true,
+  "engines": {
+    "node": "^18.15.0 || >=20.0.0"
+  },
+  "scripts": {
+    "test": "node --test regression.test.cjs",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "render": "node render.cjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.464",
+    "@remotion/renderer": "4.0.464",
+    "js-yaml": "4.1.1",
+    "prettier": "3.8.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.464"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "typescript": "5.9.3"
+  }
+}
