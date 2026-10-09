@@ -39,6 +39,7 @@ type Plan = {
   fps: number;
   totalFrames: number;
   holdFrames: number;
+  transitionFrames: number;
   cues: { phrase: string; startFrame: number; targetSeconds: number }[];
 };
 

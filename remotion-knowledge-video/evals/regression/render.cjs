@@ -233,7 +233,7 @@ async function main() {
         Math.round(plan.totalFrames / 2),
         ...plan.cues.flatMap((cue) => [
           Math.max(0, cue.startFrame - 1),
-          cue.startFrame + 48,
+          cue.startFrame + plan.transitionFrames,
         ]),
         holdStart,
         plan.totalFrames - 1,

@@ -52,6 +52,8 @@ function speechBudget(text, rate = 4, includesPauses = false) {
 }
 
 function buildPlans(sections, { rate = 4, includesPauses = false } = {}) {
+  if (!Number.isFinite(rate) || rate <= 0)
+    throw new Error("Speech rate must be a finite positive number");
   const specifications = [
     {
       kind: "expansion",
@@ -86,17 +88,27 @@ function buildPlans(sections, { rate = 4, includesPauses = false } = {}) {
     const estimate = (value) => speechBudget(value, rate, includesPauses);
     const seconds = estimate(text);
     const totalFrames = Math.max(1, frameAt(seconds));
-    const holdFrames = Math.min(frameAt(1.5), Math.floor(totalFrames / 5));
     const cues = specifications[index].phrases.map((phrase) => {
       const offset = text.indexOf(phrase);
       if (offset < 0) throw new Error("Missing phrase");
       const targetSeconds = estimate(text.slice(0, offset));
       return { phrase, targetSeconds, startFrame: frameAt(targetSeconds) };
     });
+    const lastCueFrame = Math.max(...cues.map((cue) => cue.startFrame));
+    const transitionFrames = Math.min(
+      frameAt(0.8),
+      totalFrames - 1 - lastCueFrame,
+    );
+    if (transitionFrames < 1)
+      throw new Error("No frame budget remains for the narration action");
+    const holdFrames = Math.min(
+      frameAt(1.5),
+      totalFrames - lastCueFrame - transitionFrames,
+    );
     return {
       id: `Batch-${String(index + 1).padStart(2, "0")}`,
       order: index + 1,
-      ...specifications[index],
+      kind: specifications[index].kind,
       title: section.title,
       sourceStart: section.start,
       sourceEnd: section.end,
@@ -106,6 +118,7 @@ function buildPlans(sections, { rate = 4, includesPauses = false } = {}) {
       totalFrames,
       fps: FPS,
       holdFrames,
+      transitionFrames,
       cues,
       rate,
       includesPauses,
@@ -114,10 +127,9 @@ function buildPlans(sections, { rate = 4, includesPauses = false } = {}) {
 }
 
 function stateAt(frame, plan) {
-  const stableFrame = Math.min(frame, plan.totalFrames - plan.holdFrames);
   return {
     actions: plan.cues.map((cue) =>
-      clamp((stableFrame - cue.startFrame) / Math.round(0.8 * plan.fps)),
+      clamp((frame - cue.startFrame) / plan.transitionFrames),
     ),
   };
 }

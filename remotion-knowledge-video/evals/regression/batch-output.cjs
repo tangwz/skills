@@ -56,13 +56,6 @@ async function renderBatch(directory, plans, render, verify) {
   for (const plan of plans) {
     const file = path.join(directory, `${plan.id}.mp4`);
     const previous = manifest.clips[plan.id];
-    const inputSha256 = crypto
-      .createHash("sha256")
-      .update(JSON.stringify(plan))
-      .digest("hex");
-    if (previous?.inputSha256 && previous.inputSha256 !== inputSha256) {
-      throw new Error("Input changed; reserve a new batch");
-    }
     if (previous?.status === "complete") {
       if (!fs.existsSync(file) || sha256(file) !== previous.sha256) {
         throw new Error("Completed output changed");
@@ -81,7 +74,6 @@ async function renderBatch(directory, plans, render, verify) {
       const media = await verify(plan, pending);
       manifest.clips[plan.id] = {
         status: "ready",
-        inputSha256,
         file,
         sha256: sha256(pending),
         media,
@@ -92,7 +84,6 @@ async function renderBatch(directory, plans, render, verify) {
       fs.rmSync(pending, { force: true });
       manifest.clips[plan.id] = {
         status: "failed",
-        inputSha256,
         error: error.message,
       };
       saveManifest();

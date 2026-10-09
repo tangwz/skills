@@ -378,7 +378,7 @@ function verifyProgress(plans, state) {
       assert.equal(state(cue.startFrame, plan).actions[index], 0);
       assert.ok(state(cue.startFrame + 1, plan).actions[index] > 0);
       assert.equal(
-        state(cue.startFrame + frameAt(0.8), plan).actions[index],
+        state(cue.startFrame + plan.transitionFrames, plan).actions[index],
         1,
       );
     }
@@ -397,6 +397,49 @@ test("rendered action state follows each estimated keyword and freezes throughou
   verifyProgress(plans, stateAt);
   assert.throws(() => verifyProgress(plans, () => ({ actions: [1, 1, 1] })));
   assert.equal(new Set(plans.map((plan) => plan.totalFrames)).size, 3);
+});
+
+for (const rate of [4.5, 5.2, 6]) {
+  for (const includesPauses of [false, true]) {
+    test(`actions settle before the shared ending hold at rate ${rate}, pauses included: ${includesPauses}`, async () => {
+      const { sections } = await splitTranscript(fixture("transcript.md"));
+      const plans = buildPlans(sections, { rate, includesPauses });
+      verifyProgress(plans, stateAt);
+      for (const plan of plans) {
+        assert.equal(plan.totalFrames, frameAt(plan.estimatedSeconds));
+        assert.ok(plan.holdFrames >= 1);
+        const holdStart = plan.totalFrames - plan.holdFrames;
+        const position = (frame) =>
+          gridModule.getGridTravelSeconds(
+            frame / plan.fps,
+            plan.totalFrames / plan.fps,
+            plan.holdFrames / plan.fps,
+          );
+        for (let frame = holdStart; frame < plan.totalFrames; frame++) {
+          assert.equal(position(frame), position(holdStart));
+        }
+      }
+    });
+  }
+}
+
+test("invalid speech rates fail before producing a plan", async () => {
+  const { sections } = await splitTranscript(fixture("transcript.md"));
+  for (const rate of [0, -1, NaN, Infinity, -Infinity]) {
+    assert.throws(
+      () => buildPlans(sections, { rate }),
+      /finite positive number/,
+    );
+  }
+});
+
+test("a short speech budget shortens the transition instead of extending the clip", async () => {
+  const { sections } = await splitTranscript(fixture("transcript.md"));
+  const plans = buildPlans(sections, { rate: 50, includesPauses: true });
+  verifyProgress(plans, stateAt);
+  assert.ok(plans.some((plan) => plan.transitionFrames < frameAt(0.8)));
+  for (const plan of plans)
+    assert.equal(plan.totalFrames, frameAt(plan.estimatedSeconds));
 });
 
 const resultLabels = {
