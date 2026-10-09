@@ -2,7 +2,9 @@ const { parsers } = require("prettier/plugins/markdown");
 const yaml = require("js-yaml");
 
 const textOf = (node) =>
-  node.value ?? (node.children ?? []).map(textOf).join("");
+  node.type === "break"
+    ? " "
+    : (node.value ?? (node.children ?? []).map(textOf).join(""));
 
 function paragraphsOf(node) {
   if (["code", "html", "frontMatter"].includes(node.type)) return [];

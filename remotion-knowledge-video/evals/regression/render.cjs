@@ -81,10 +81,17 @@ function writeTailSignal(file) {
 }
 
 async function main() {
-  const outputParent = process.argv[2];
-  const fontDirectory = process.argv[3];
-  if (!outputParent || !fontDirectory)
-    throw new Error("Usage: node render.cjs OUTPUT_PARENT FONT_DIRECTORY");
+  const resume = process.argv[2] === "--resume";
+  const outputTarget = process.argv[resume ? 3 : 2];
+  const fontDirectory = process.argv[resume ? 4 : 3];
+  if (
+    !outputTarget ||
+    !fontDirectory ||
+    process.argv.length !== (resume ? 5 : 4)
+  )
+    throw new Error(
+      "Usage: node render.cjs [--resume] OUTPUT_TARGET FONT_DIRECTORY",
+    );
   const requiredDependencies = require("./package.json").dependencies;
   const dependencies = Object.fromEntries(
     Object.keys(requiredDependencies).map((name) => [
@@ -112,10 +119,80 @@ async function main() {
     path.join(fontDirectory, "chinese.ttf"),
   );
   const chineseFontFormat = detectChineseFontFormat(chineseFontData);
-  const directory = reserveBatch(
-    path.resolve(outputParent),
-    "batch-regression",
+  const fontHashes = Object.fromEntries(
+    ["title.woff2", "body.woff2", "chinese.ttf", "mono.woff2"].map((file) => [
+      file,
+      sha256(path.join(fontDirectory, file)),
+    ]),
   );
+  const implementationHashes = Object.fromEntries(
+    [
+      "Clip.tsx",
+      "render.cjs",
+      "timing.cjs",
+      "batch-output.cjs",
+      "split-transcript.cjs",
+      "font-format.cjs",
+      "regression.test.cjs",
+      "package-lock.json",
+      "tsconfig.json",
+      "../../assets/template/VideoChrome.tsx",
+      "../../assets/template/video-style.ts",
+      "../../assets/template/video-brand.ts",
+      "../../assets/template/grid-motion.ts",
+      "../../assets/template/end-card-timing.ts",
+    ].map((file) => [file, sha256(path.join(__dirname, file))]),
+  );
+  const source = fs.readFileSync(
+    path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
+    "utf8",
+  );
+  const { sections } = await splitTranscript(source);
+  const plans = buildPlans(sections);
+  const audioTest = audioCoverage(0.004, 1.004);
+  const inputs = {
+    plans,
+    audioTest,
+    chineseFontFormat,
+    fontHashes,
+    implementationHashes,
+    dependencies,
+  };
+  const directory = resume
+    ? path.resolve(outputTarget)
+    : reserveBatch(path.resolve(outputTarget), "batch-regression");
+  const plansFile = path.join(directory, "plans.json");
+  const publicDir = path.join(directory, "public");
+  if (resume) {
+    if (
+      !fs.existsSync(plansFile) ||
+      !fs.existsSync(path.join(directory, "manifest.json"))
+    )
+      throw new Error(
+        "Resume requires an existing batch with input snapshot and manifest",
+      );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(plansFile, "utf8")),
+      inputs,
+      "Resume inputs changed or are unverifiable; reserve a new batch",
+    );
+    for (const [file, digest] of Object.entries(fontHashes))
+      assert.equal(
+        sha256(path.join(publicDir, file)),
+        digest,
+        "Batch font changed",
+      );
+  } else {
+    fs.mkdirSync(publicDir);
+    for (const file of Object.keys(fontHashes)) {
+      fs.copyFileSync(
+        path.join(fontDirectory, file),
+        path.join(publicDir, file),
+      );
+    }
+    writeTailSignal(path.join(publicDir, "tail-signal.wav"));
+    fs.writeFileSync(plansFile, JSON.stringify(inputs, null, 2));
+  }
   const unitOutput = command(process.execPath, [
     "--test",
     "--test-reporter=tap",
@@ -128,36 +205,6 @@ async function main() {
     path.join(__dirname, "tsconfig.json"),
   ]);
   fs.writeFileSync(path.join(directory, "typecheck.log"), typeCheckOutput);
-  const publicDir = path.join(directory, "public");
-  fs.mkdirSync(publicDir);
-  const fontHashes = {};
-  for (const file of [
-    "title.woff2",
-    "body.woff2",
-    "chinese.ttf",
-    "mono.woff2",
-  ]) {
-    if (file === "chinese.ttf")
-      fs.writeFileSync(path.join(publicDir, file), chineseFontData);
-    else
-      fs.copyFileSync(
-        path.join(fontDirectory, file),
-        path.join(publicDir, file),
-      );
-    fontHashes[file] = sha256(path.join(publicDir, file));
-  }
-  writeTailSignal(path.join(publicDir, "tail-signal.wav"));
-  const source = fs.readFileSync(
-    path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
-    "utf8",
-  );
-  const split = await splitTranscript(source);
-  const plans = buildPlans(split.sections);
-  const audioTest = audioCoverage(0.004, 1.004);
-  fs.writeFileSync(
-    path.join(directory, "plans.json"),
-    JSON.stringify({ plans, audioTest, chineseFontFormat }, null, 2),
-  );
   const entry = path.join(directory, "entry.tsx");
   fs.writeFileSync(
     entry,
@@ -186,7 +233,7 @@ async function main() {
       logLevel: "error",
     });
   // Exercise recovery with real encoded siblings, not only mocked file writes.
-  let injectFailure = true;
+  let injectFailure = !resume;
   const calls = [];
   const injectedRender = async (plan, output) => {
     calls.push(plan.id);
@@ -194,15 +241,15 @@ async function main() {
       throw new Error("Injected second-clip failure");
     await render(plan, output);
   };
-  const first = await renderBatch(
-    directory,
-    plans,
-    injectedRender,
-    verifyMedia,
+  const first = resume
+    ? JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"))
+    : await renderBatch(directory, plans, injectedRender, verifyMedia);
+  if (!resume) assert.equal(first.clips[plans[1].id].status, "failed");
+  const completed = plans.filter(
+    (plan) => first.clips[plan.id]?.status === "complete",
   );
-  assert.equal(first.clips[plans[1].id].status, "failed");
-  const preserved = [plans[0], plans[2]].map(
-    (plan) => first.clips[plan.id].sha256,
+  const preserved = completed.map((plan) =>
+    sha256(path.join(directory, `${plan.id}.mp4`)),
   );
   injectFailure = false;
   calls.length = 0;
@@ -212,9 +259,9 @@ async function main() {
     injectedRender,
     verifyMedia,
   );
-  assert.deepEqual(calls, [plans[1].id]);
+  if (!resume) assert.deepEqual(calls, [plans[1].id]);
   assert.deepEqual(
-    [plans[0], plans[2]].map((plan) => manifest.clips[plan.id].sha256),
+    completed.map((plan) => manifest.clips[plan.id].sha256),
     preserved,
   );
   assert.ok(
@@ -266,7 +313,7 @@ async function main() {
     id: "AudioCoverage",
   });
   const audioDirectory = path.join(directory, "audio-coverage");
-  fs.mkdirSync(audioDirectory);
+  fs.mkdirSync(audioDirectory, { recursive: true });
   const mixedWav = path.join(audioDirectory, "mixed.wav");
   await renderMedia({
     serveUrl,
@@ -289,6 +336,7 @@ async function main() {
   const audioFile = path.join(audioDirectory, "audio-coverage-test.mp4");
   // Encode once from lossless mixing; avoid intermediate ADTS priming offsets.
   command("ffmpeg", [
+    "-y",
     "-v",
     "error",
     "-i",
@@ -310,6 +358,7 @@ async function main() {
   verifyMedia({ fps: 60, totalFrames: audioTest.totalFrames }, audioFile);
   const pcmFile = path.join(audioDirectory, "decoded-audio.f32");
   command("ffmpeg", [
+    "-y",
     "-v",
     "error",
     "-i",
@@ -354,19 +403,7 @@ async function main() {
       node: process.version,
       dependencies,
     },
-    implementationHashes: Object.fromEntries(
-      [
-        "Clip.tsx",
-        "render.cjs",
-        "timing.cjs",
-        "batch-output.cjs",
-        "split-transcript.cjs",
-        "font-format.cjs",
-        "../../assets/template/VideoChrome.tsx",
-        "../../assets/template/video-style.ts",
-        "../../assets/template/grid-motion.ts",
-      ].map((file) => [file, sha256(path.join(__dirname, file))]),
-    ),
+    implementationHashes,
     assumptions: {
       chineseCharactersPerSecond: 4,
       englishWordsPerSecond: 2.5,
@@ -375,7 +412,8 @@ async function main() {
     },
     clips: plans.map((plan) => ({ ...plan, ...manifest.clips[plan.id] })),
     retry: {
-      injectedFailure: plans[1].id,
+      resumed: resume,
+      injectedFailure: resume ? null : plans[1].id,
       rerendered: calls,
       preservedSiblingHashes: preserved,
     },
