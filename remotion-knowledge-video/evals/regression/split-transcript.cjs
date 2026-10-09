@@ -1,14 +1,24 @@
 const { parsers } = require("prettier/plugins/markdown");
 const yaml = require("js-yaml");
 
-const textOf = (node) =>
-  node.type === "break"
-    ? " "
-    : (node.value ?? (node.children ?? []).map(textOf).join(""));
+const textOf = (node) => {
+  if (node.type === "break") return " ";
+  if (node.type === "html")
+    return /^<br(?:\s[^>]*)?\/?\s*>$/i.test(node.value) ? " " : "";
+  if (typeof node.value === "string")
+    return node.value.replace(/\r\n?|\n/g, " ");
+  return (node.children ?? []).map(textOf).join("");
+};
 
 function paragraphsOf(node) {
   if (["code", "html", "frontMatter"].includes(node.type)) return [];
-  if (node.type === "paragraph") return [textOf(node)];
+  if (node.type === "paragraph") {
+    const text = textOf(node).replace(
+      /(\p{Script=Han})\s+(?=\p{Script=Han})/gu,
+      "$1",
+    );
+    return text.trim() ? [text] : [];
+  }
   return (node.children ?? []).flatMap(paragraphsOf);
 }
 

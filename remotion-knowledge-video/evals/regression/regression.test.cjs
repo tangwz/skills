@@ -132,6 +132,73 @@ test("Markdown hard breaks preserve word boundaries and spoken duration", async 
   }
 });
 
+test("soft wraps preserve English words and CJK cue matching", async () => {
+  const source = fixture("transcript.md");
+  const { sections } = await splitTranscript(source);
+  const original = buildPlans(sections);
+  const phrase = original[0].cues[1].phrase;
+  for (const newline of ["\n", "\r\n"]) {
+    const english = await splitTranscript(`first${newline}second`);
+    assert.deepEqual(english.sections[0].paragraphs, ["first second"]);
+    assert.equal(speechBudget(english.sections[0].paragraphs[0]), 0.8);
+    const wrapped = source.replace(
+      phrase,
+      phrase.slice(0, -2) + newline + phrase.slice(-2),
+    );
+    const result = await splitTranscript(wrapped);
+    const plans = buildPlans(result.sections);
+    assert.deepEqual(
+      plans.map((plan) => plan.cues),
+      original.map((plan) => plan.cues),
+    );
+    assert.deepEqual(
+      plans.map((plan) => plan.totalFrames),
+      original.map((plan) => plan.totalFrames),
+    );
+  }
+});
+
+test("inline HTML tags do not contribute spoken words and br tags separate them", async () => {
+  for (const [source, plain] of [
+    ["This is <em>spoken</em>.", "This is spoken."],
+    ["This is <!-- markup -->spoken.", "This is spoken."],
+    ["foo<br>bar", "foo bar"],
+    ["foo<BR />bar", "foo bar"],
+    ["foo<br class='line'>bar", "foo bar"],
+    ["**<em></em>**", ""],
+  ]) {
+    const { sections } = await splitTranscript(source);
+    assert.equal(sections[0].raw, source);
+    assert.deepEqual(sections[0].paragraphs, plain ? [plain] : []);
+    assert.equal(
+      speechBudget(sections[0].paragraphs[0] ?? ""),
+      speechBudget(plain),
+    );
+  }
+});
+
+test("inline HTML around a cue preserves its duration and trigger", async () => {
+  const source = fixture("transcript.md");
+  const { sections } = await splitTranscript(source);
+  const original = buildPlans(sections);
+  const phrase = original[0].cues[1].phrase;
+  for (const rendered of [
+    phrase.replace("token", "<em>token</em>"),
+    phrase.replace("token ", "token<br>"),
+  ]) {
+    const result = await splitTranscript(source.replace(phrase, rendered));
+    const plans = buildPlans(result.sections);
+    assert.deepEqual(
+      plans.map((plan) => plan.cues),
+      original.map((plan) => plan.cues),
+    );
+    assert.deepEqual(
+      plans.map((plan) => plan.totalFrames),
+      original.map((plan) => plan.totalFrames),
+    );
+  }
+});
+
 test("a hard break inside a cue preserves its plan and duration", async () => {
   const source = fixture("transcript.md");
   const { sections } = await splitTranscript(source);
@@ -729,6 +796,39 @@ test("a legacy manifest without the full plan identity fails without mutation", 
   }
 });
 
+test("a moved completed batch refreshes paths without re-encoding", async () => {
+  const parent = fs.mkdtempSync(
+    path.join(os.tmpdir(), "knowledge-moved-complete-"),
+  );
+  const plans = [{ id: "Test-1" }];
+  try {
+    const original = reserveBatch(parent, "sample");
+    await renderBatch(
+      original,
+      plans,
+      async (plan, file) => fs.writeFileSync(file, plan.id),
+      async () => ({ decoded: true }),
+    );
+    const digest = sha256(path.join(original, "Test-1.mp4"));
+    const moved = path.join(parent, "moved");
+    fs.renameSync(original, moved);
+    const manifest = await renderBatch(
+      moved,
+      plans,
+      async () => assert.fail("Unexpected render"),
+      async () => assert.fail("Unexpected verification"),
+    );
+    assert.equal(manifest.clips["Test-1"].file, path.join(moved, "Test-1.mp4"));
+    assert.equal(sha256(manifest.clips["Test-1"].file), digest);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(moved, "manifest.json"), "utf8")),
+      manifest,
+    );
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 function interruptPublication(directory, plans, phase) {
   const child = spawnSync(
     process.execPath,
@@ -774,6 +874,48 @@ function interruptPublication(directory, plans, phase) {
   );
   assert.equal(child.error, undefined);
   assert.equal(child.status, 91, child.stderr);
+}
+
+for (const phase of ["before-publish", "after-publish"]) {
+  test(`a moved ${phase} checkpoint refreshes all output paths`, async () => {
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-moved-ready-"),
+    );
+    const plans = [1, 2, 3].map((order) => ({ id: `Test-${order}` }));
+    try {
+      const original = reserveBatch(parent, "sample");
+      interruptPublication(original, plans, phase);
+      const digest = sha256(
+        path.join(
+          original,
+          phase === "before-publish" ? "Test-2.pending.mp4" : "Test-2.mp4",
+        ),
+      );
+      const moved = path.join(parent, "moved");
+      fs.renameSync(original, moved);
+      const rendered = [];
+      const manifest = await renderBatch(
+        moved,
+        plans,
+        async (plan, file) => {
+          rendered.push(plan.id);
+          fs.writeFileSync(file, plan.id);
+        },
+        async () => ({ decoded: true }),
+      );
+      assert.deepEqual(rendered, ["Test-3"]);
+      for (const plan of plans) {
+        assert.equal(
+          manifest.clips[plan.id].file,
+          path.join(moved, `${plan.id}.mp4`),
+        );
+        assert.ok(fs.existsSync(manifest.clips[plan.id].file));
+      }
+      assert.equal(sha256(manifest.clips["Test-2"].file), digest);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
 }
 
 for (const phase of [
