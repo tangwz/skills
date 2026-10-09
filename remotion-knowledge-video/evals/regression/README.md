@@ -11,6 +11,7 @@ npm ci --prefix SKILL_PATH/evals/regression
 node --test SKILL_PATH/evals/regression/regression.test.cjs
 npm run check --prefix SKILL_PATH/evals/regression
 node SKILL_PATH/evals/regression/render.cjs OUTPUT_PARENT FONT_DIRECTORY
+node SKILL_PATH/evals/regression/render.cjs --resume EXISTING_BATCH_DIRECTORY FONT_DIRECTORY
 ```
 
 将大写占位符替换成实际路径。字体目录需要实际可用的 `title.woff2`、`body.woff2`、`chinese.ttf`、`mono.woff2`，分别映射模板四个字体角色。本次英文可用本项目已有的 Space Grotesk / Inter / JetBrains Mono，中文使用本地宋体；`chinese.ttf` 也接受浏览器支持的本地 TTC 集合。渲染器检查中文字体的文件头：单字体 TTF 传入 `truetype`，以 `ttcf` 开头的集合传入 `collection`，不根据重命名后的扩展名猜测。两者使用 [CSS 字体规范的格式提示](https://www.w3.org/TR/css-fonts-4/#font-format-definitions)；不支持或过短的输入在建立渲染批次前报错，浏览器加载失败也会终止渲染。字体仅为测试准备在输出工作区，不随技能分发，不依赖到其他项目的符号链接。缺失字体时明确失败，结果保存实际文件哈希和中文字体格式。
@@ -18,6 +19,8 @@ node SKILL_PATH/evals/regression/render.cjs OUTPUT_PARENT FONT_DIRECTORY
 快速检查覆盖：原稿源位置与顺序、已知 YAML 元数据、开头横线但无 YAML、YAML 形状的口播与 BOM/CRLF 变体、混合字段与错误值类型、两种代码围栏、HTML/引用/列表/缩进代码、嵌套列表与引用口播的顺序及实际计划、Setext、空段与标题段；30/60/59.94 fps 非整帧音频末尾、整帧音频和额外尾段的浮点噪声、真实正小数跨度与正的极短跨度、绝对边界取整；实际动画消费的逐词进度、实际图解元素树中结果标签的有效透明度、逐帧前景 hold 与模板实际背景计算的逐帧 hold；新批次输出重名保护；整批计划新增、删除、重排或改动时在渲染和写入前拒绝恢复；首段完成前已绑定完整计划；失败段单独重试。包含“全部动作一开始就完成”的负向样本，确认检查器会拒绝。
 
 渲染批次的 manifest 在首次编码前保存完整有序计划的哈希。只允许同版计划续跑；缺少该哈希的旧报告不能证明原批次的完整输入，应建立新目录，不就地猜测或迁移。
+
+普通命令创建新批次；中断后用 `--resume` 明确指定原批次目录。续跑在写入前核对 `plans.json` 中的完整输入、字体、实现与锁定依赖快照，以及批次内字体字节；不兼容或缺少快照的旧批次需要新目录。已验证的成片按 manifest 复用，只编码未完成的段，不注入新的失败。关键帧和音频检查等验证产物会重新生成，不能将其重建描述为正文视频重编码。
 
 整批哈希已覆盖每段内容、编号和顺序，不再维护逐片输入哈希。各段输出的字节哈希仍用于检查文件是否被修改。前景动画直接按帧推进并限幅到最终状态；结尾稳定区从最后一个动作完成后的剩余预算分配，背景使用同一稳定区。频道暂定语速 4.5、5.2、6 字/秒分别检查包含/不包含停顿两种口径；无效语速拒绝生成，较短预算压缩入场而不延长片长。
 
