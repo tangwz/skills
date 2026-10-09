@@ -5,7 +5,13 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { splitTranscript } = require("./split-transcript.cjs");
-const { frameAt, audioCoverage, buildPlans, stateAt } = require("./timing.cjs");
+const {
+  frameAt,
+  audioCoverage,
+  speechBudget,
+  buildPlans,
+  stateAt,
+} = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
 const { detectChineseFontFormat } = require("./font-format.cjs");
 const ts = require("typescript");
@@ -113,6 +119,92 @@ const fixture = (name) =>
     path.join(__dirname, "../fixtures/batch-transcript", name),
     "utf8",
   );
+
+test("Markdown hard breaks preserve word boundaries and spoken duration", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    for (const marker of ["  ", "\\"]) {
+      const source = `first${marker}${newline}second`;
+      const { sections } = await splitTranscript(source);
+      assert.equal(sections[0].raw, source);
+      assert.deepEqual(sections[0].paragraphs, ["first second"]);
+      assert.equal(speechBudget(sections[0].paragraphs[0]), 0.8);
+    }
+  }
+});
+
+test("a hard break inside a cue preserves its plan and duration", async () => {
+  const source = fixture("transcript.md");
+  const { sections } = await splitTranscript(source);
+  const original = buildPlans(sections);
+  const phrase = original[0].cues[1].phrase;
+  for (const marker of ["  ", "\\"]) {
+    const broken = source.replace(
+      phrase,
+      phrase.replace("token ", `token${marker}\n`),
+    );
+    const result = await splitTranscript(broken);
+    const plans = buildPlans(result.sections);
+    assert.deepEqual(
+      plans.map((plan) => plan.cues),
+      original.map((plan) => plan.cues),
+    );
+    assert.deepEqual(
+      plans.map((plan) => plan.totalFrames),
+      original.map((plan) => plan.totalFrames),
+    );
+  }
+});
+
+for (const invalid of ["missing", "changed"]) {
+  test(`the renderer refuses a ${invalid} resume snapshot before changing files`, () => {
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-cli-resume-"),
+    );
+    try {
+      const fonts = path.join(parent, "fonts");
+      const directory = path.join(parent, "batch");
+      fs.mkdirSync(fonts);
+      fs.mkdirSync(directory);
+      for (const file of ["title.woff2", "body.woff2", "mono.woff2"])
+        fs.writeFileSync(path.join(fonts, file), "test font bytes");
+      fs.writeFileSync(
+        path.join(fonts, "chinese.ttf"),
+        Buffer.from([0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      );
+      if (invalid === "changed") {
+        fs.writeFileSync(
+          path.join(directory, "plans.json"),
+          JSON.stringify({ plans: [] }),
+        );
+        fs.writeFileSync(
+          path.join(directory, "manifest.json"),
+          JSON.stringify({ clips: {} }),
+        );
+      }
+      const snapshot = () =>
+        Object.fromEntries(
+          fs
+            .readdirSync(directory)
+            .map((file) => [file, sha256(path.join(directory, file))]),
+        );
+      const before = snapshot();
+      const child = spawnSync(
+        process.execPath,
+        [require.resolve("./render.cjs"), "--resume", directory, fonts],
+        { encoding: "utf8", timeout: 10000 },
+      );
+      assert.equal(child.status, 1, child.stderr);
+      assert.match(
+        child.stderr,
+        invalid === "missing" ? /existing batch/ : /Resume inputs changed/,
+      );
+      assert.deepEqual(snapshot(), before);
+      assert.deepEqual(fs.readdirSync(parent).sort(), ["batch", "fonts"]);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
 
 test("source slices retain the three raw sections and ignore two empty sections", async () => {
   const source = fixture("transcript.md");
