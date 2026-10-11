@@ -17,13 +17,27 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 ## 合并前的证据
 
 1. 从用户指定的 PR 或当前分支确认 GitHub 主机、仓库、PR 编号、base/head 分支、head 所属仓库与对应 remote。核对 PR、API 和 Git remote 指向同一主机；所有 `gh api` 调用显式指定该主机。不要假设 remote 总是 `origin`，也不要把 fork 的分支当成 base 仓库的同名分支。
-2. 读取 PR 最新状态、完整审查讨论及审查摘要、当前 head 的 CI、分支保护、rulesets 和合并队列要求。讨论分页要读完。PR 已合并时只完成剩余清理；已关闭但未合并时停止。未解决意见、进行中的审查、仍有效的 changes requested、待完成的必需检查或相关 CI 失败都应先处理。
+2. 读取 PR 最新状态、完整审查讨论及审查摘要、当前 head 的 CI，按「自动选择合并模式」核对目标分支规则并选择模式。审查讨论和分支规则的分页都要读完。PR 已合并时只完成剩余清理；已关闭但未合并时停止。未解决意见、进行中的审查、仍有效的 changes requested、待完成的必需检查或相关 CI 失败都应先处理。
 3. 记录完整的已验证 head SHA 和 base SHA。CI 必须覆盖该 head，或平台明确记录的对应测试合并提交；不能用旧 head 的成功结果代替。逐项核对有效的必需 approval 的 `commit_id` / `commit.oid` 是否对应该 head，或确认适用保护规则在服务端保证最近一次可审查 push 已获批准；汇总的 `APPROVED` 状态不能替代这一证据。没有配置 CI 时按仓库约定采用可用验证，说明依据。
-4. 查看 `git status`、`git branch -vv`、`git worktree list --porcelain` 和最新远端 refs。本地待推送提交必须与已验证 PR head 一致；目标分支不能夹带未发布提交。head/base 变化时重新评估，不顺手合入未审查的提交。
+4. 查看 `git status`、`git branch -vv`、`git worktree list --porcelain` 和最新远端 refs。本地待推送提交必须与已验证 PR head 一致；目标分支不能夹带未发布提交。head 变化时重新核验其审查、CI 和本地保留；base 变化时按「严格模式」或「普通模式」重新核验合并条件，不顺手合入未审查的提交。
 5. 保留所有不属于本次任务的已修改、暂存和未跟踪文件。目标分支已在另一 worktree 检出时使用该 worktree。可证明不受影响的修改不阻碍快进；先记录其差异，之后比较。若会冲突，停止依赖该工作区的写操作，不自动 stash、reset 或清理文件。
 6. 在入队或任何远端合并前，fetch 已核对的精确 head ref，并确认取回的 SHA 等于 `reviewed_head`；先让真正的本地 `refs/heads/$local_topic` 保存该提交。分支不存在时直接创建而无需 checkout；已存在时核对它指向该 head，不覆盖不同提交或移动另一 worktree 的分支。名称冲突时保留原分支并停止，或按已有授权采用独立本地名称。仅有 `FETCH_HEAD`、远端跟踪 ref 或打算合并后再创建分支，不满足本地保留要求。
 
-单纯合并且树和已验证 head 不变时，复用现有测试证据。只有新增修复、冲突解决或集成结果改变才补充有意义的验证。
+已验证 head 及其源码 tree 未变时，复用该 head 的测试证据；仅 base 推进不使这些证据自动失效。新增修复或冲突解决改变待合入内容时须重新验证；最新 base 的集成验证是否必需，按所选模式及仓库、用户的验证要求判断。
+
+## 自动选择合并模式
+
+根据 PR 的目标仓库和目标分支选择模式；用户明确要求严格模式时，使用严格模式。
+
+读取 `repos/$base_repo/branches/$base_branch` 的 `protected` 状态，以及 `repos/$base_repo/rules/branches/$base_branch` 返回的全部适用生效规则（含组织规则）；分支名须 URL 编码。存在保护或适用规则时，核对相应经典分支保护或 ruleset 的详情及合并队列要求。见 [分支状态](https://docs.github.com/en/rest/branches/branches#get-a-branch) 与 [适用规则](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch)。
+
+| 核实结果 | 模式 |
+| --- | --- |
+| `protected=true`，或存在适用的生效规则或合并队列要求 | 严格 |
+| 分支状态与适用规则均读取成功，`protected=false` 且适用规则为空 | 普通 |
+| 保护或规则读取失败、分页不全、证据过期或相互矛盾 | 未知；核实前停止合并或入队 |
+
+受保护分支不能改用普通模式。合并或入队前重新读取保护状态、适用规则及 head/base SHA；变化时重新选择模式，并按「严格模式」或「普通模式」重新核验合并条件。向用户说明所选模式及判断依据，无需询问用户选择哪种模式。
 
 ## 选择能保持直线的方式
 
@@ -31,19 +45,21 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 
 **快进以原子约束为前提。** 若平台提供能原子校验 PR head 的快进合并机制，且仓库流程允许、base 是 head 的祖先、新增区间无 merge commit，可用它保留原 SHA。没有这种已验证机制时，不直接向 base 推送旧 head。标准 GitHub 合并没有纯快进选项，不能为保留 SHA 改用无 head 条件的 push。
 
-**先确认实际提交范围。** 读取平台的 stack 归属与所有尚未合并的 downstack PR；不能只根据所选 PR 的 base/head 猜测是否独立。属于 stack 时不使用下方单 PR 命令：先确认选定 PR 和全部未合并 downstack PR 的授权，并逐项记录主机、仓库、head SHA 与本地 topic。对每个将落地的 PR 核对审查、CI 和合并策略，完成第 6 步的本地保留，以及下节的依赖 PR、共享 source 和并发清理约束；任一层不满足条件时不启动整个 stack 合并。所有层均满足后才使用官方异步 stack 路径，并逐层验收与清理，见 [堆叠 PR 合并](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-stacked-pull-requests)。
+**先确认实际提交范围。** 读取平台的 stack 归属与所有尚未合并的 downstack PR；不能只根据所选 PR 的 base/head 猜测是否独立。属于 stack 时不使用下方单 PR 命令：先确认选定 PR 和全部未合并 downstack PR 的授权，并逐项记录主机、仓库、head SHA 与本地 topic。对每个将落地的 PR 核对审查、CI 和合并策略，完成「合并前的证据」第 6 步的本地保留，并满足「先确认合并，再清理远端」中的依赖 PR、共享 source 和并发清理约束；任一层不满足条件时不启动整个 stack 合并。所有层均满足后才使用官方异步 stack 路径，并逐层验收与清理，见 [堆叠 PR 合并](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-stacked-pull-requests)。
 
 **部分 stack 合并也涉及未选中的 upstack PR。** 读取完整 stack，列出剩余 upstack PR 及平台会自动改写的 head/base；GitHub 会将下一未合并 PR 自动 rebase 到 stack base。对受影响 PR 说明发布分支改写、签名损失及原审批和 CI 证据可能失效，依据已有授权确认这些跨 PR 影响，并逐项记录主机、仓库、原 head SHA 与保留用本地分支。启动异步合并前按第 6 步保存这些精确原 head；任一受影响 PR 范围不明、缺少改写授权或原 head 无法保留时停止，不把所选 PR 的合并授权扩展为 upstack 改写授权。提交请求前重新核对完整 stack 和受影响 heads，变化时重新评估。操作后读回剩余 PR 的新 head/base，保留原 head 的本地分支，不清理未合并 PR 的远端分支；后续合并须重新建立新 head 的审查、CI 和签名证据。
 
 选择 rebase 前检查 PR 新增范围内的每个提交，识别 tree 与唯一父提交相同的初始空提交。GitHub rebase 会丢弃这些提交；发布或自动化标记不能默认为可丢。存在空提交时先取得舍弃它们的明确授权，或选择符合原子约束且保留它们的策略；没有可用策略就停止。验收时记录获准舍弃的提交，不能仅凭最终 tree 一样宣称全部提交保留，见 [GitHub rebase 行为](https://docs.github.com/en/pull-requests/reference/pull-request-merges#rebase-and-merge-your-commits)。
 
-**非队列路径同时约束 base。** `--match-head-commit` 不校验 base SHA，GitHub 合并接口也没有 expected-base 参数。仅当适用保护规则在合并时强制通过针对当前 base / 测试合并结果的必需检查，且要求分支保持最新时，才采用此路径。只有 head 的 CI 或刚预读的 base SHA 不足以阻止 base 随后推进；缺少这种集成约束时改走已核验策略的 merge queue，或停止并说明限制，不绕过保护，见 [分支保护](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)。
+**严格模式。** 不使用队列时，服务端保护规则必须强制要求：基于最新 base 的集成检查（或对应测试合并结果的检查）通过，且分支保持最新。无法满足这些条件时，使用已核验合并策略的 merge queue；没有符合要求的队列时，停止并说明缺少的保障，不改用普通模式或询问是否允许例外。见 [分支保护](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)。
+
+**普通模式。** 完成「合并前的证据」中的核验并具备相应操作授权后，直接执行带 head 条件的合并。仅 base 推进时，刷新规则、合并状态、审查和 CI；若仍为普通模式、head 未变、当前 head 的审查和 CI 有效、平台确认可合并且授权齐全，可复用 head 验证继续合并，不因缺少新 base 的集成验证而停止或询问例外。仓库或用户另有验证要求时仍须满足；已知冲突或失败检查应先处理。`--match-head-commit` 只校验 PR head，不校验 base SHA；合并前读取 base SHA 也不能阻止 base 随后推进。
 
 GitHub rebase merge 逐个重放非空主题提交，但会改变提交 ID；squash 将源提交替换为一个新提交，只在单一逻辑变更且用户接受压缩时考虑。依据已有授权选择；没有相应授权不执行 rebase、squash 或覆盖已发布历史。
 
 **所有改写路径都检查签名来源。** 选择 rebase、squash 或采用这些策略的合并队列前，检查整个 PR 范围的签名、平台验证状态与适用签名要求。这些方式不保留原提交者的逐提交签名；新的 squash 提交即使带有 GitHub 的 Verified 签名，也不能替代原作者的来源验证。存在签名时说明损失，依据已有授权确认用户接受，或采用满足前述原子约束和签名规则的保留/授权重签策略。接受 SHA 改变或提交压缩不等于接受原签名丢失，不能仅凭最终 tree 一样宣称来源验证被保留；无可用策略则停止。见 [rebase 签名限制](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-rebase-and-merge) 与 [squash 签名规则](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-signed-commits)。
 
-上述集成保护适用、PR 不属于 stack、仓库允许且已获 rebase 授权、目标分支不要求队列时，例如：
+符合已选合并模式的要求，且 PR 不属于 stack、仓库允许 rebase、用户已授权 rebase、目标分支不要求合并队列时，可执行：
 
 ```bash
 gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
@@ -51,7 +67,7 @@ gh pr merge "$pr_url" --rebase --match-head-commit "$reviewed_head"
 
 **入队前核对队列的实际策略。** 目标分支要求 merge queue 时，读取该分支适用的队列配置，确认实际使用 merge、rebase 还是 squash；CLI 的 `--rebase` 不会替队列选择策略。merge 会引入合并节点，必须停止；squash 只有符合前述压缩条件并获得授权才可入队；rebase 也需具备相应授权。无法读取或确定队列策略时停止入队，说明阻碍。不能仅凭命令行 flag 推断会保留主题提交，见 [GitHub 合并策略](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github)。
 
-**按 PR 类型条件式直接入队，不启用等待中的 auto-merge。** 先等待入队所需的检查与审查就绪，再重读并核对 head。只有独立 PR 使用 `gh api graphql` 调用 `enqueuePullRequest`，将 `expectedHeadOid` 设置为 `reviewed_head`，并核对实际队列条目。stack 无论是否要求队列，都沿用 REST `merge-async`，不能改用单 PR 的 GraphQL 入队或同步合并接口；非队列路径明确使用 `merge_action=direct_merge` 和已授权的 `merge_method`，并满足前述集成保护。stack 要求队列时明确使用 `sha=reviewed_head`、`merge_action=merge_queue` 和 `bypass_rules=false`，队列策略仍按上一段核对。以下变量来自已验证的所选 PR 主机、base 仓库与编号，示例仅适用于已完成整个 stack 授权和 head 保留的队列路径：
+**按 PR 类型条件式直接入队，不启用等待中的 auto-merge。** 先等待入队所需的检查与审查就绪，再重读并核对 head。只有独立 PR 使用 `gh api graphql` 调用 `enqueuePullRequest`，将 `expectedHeadOid` 设置为 `reviewed_head`，并核对实际队列条目。stack 无论是否要求队列，都沿用 REST `merge-async`，不能改用单 PR 的 GraphQL 入队或同步合并接口；非队列路径明确使用 `merge_action=direct_merge` 和已授权的 `merge_method`，按「自动选择合并模式」逐个核验目标分支，并满足各自模式的合并条件。stack 要求队列时明确使用 `sha=reviewed_head`、`merge_action=merge_queue` 和 `bypass_rules=false`，队列策略按「入队前核对队列的实际策略」中的要求核对。以下变量来自已验证的所选 PR 主机、base 仓库与编号，示例仅适用于已完成整个 stack 授权和 head 保留的队列路径：
 
 ```bash
 gh api --hostname "$pr_host" --method PUT \
@@ -66,7 +82,7 @@ gh api --hostname "$pr_host" --method PUT \
 
 已排队不等于合并完成；head 改变或离队后重新评估，不自动为新 head 入队。不要使用默认 merge commit、默认 `gh pr update-branch`、管理员绕过或改变保护规则来获得直线。
 
-**远端确认之前不推进本地 base。** 先完成条件式远端合并并读回实际结果，再执行下一节的本地快进。远端拒绝、失败、结果不明或仍在队列时，本地 base 保持原位置；只做状态核对，不自动回滚或强推。
+**远端确认之前不推进本地 base。** 先完成条件式远端合并并读回实际结果，再执行「先确认合并，再清理远端」中的本地快进。远端拒绝、失败、结果不明或仍在队列时，本地 base 保持原位置；只做状态核对，不自动回滚或强推。
 
 ## 先确认合并，再清理远端
 
@@ -129,4 +145,4 @@ git branch --unset-upstream "$local_topic"
 
 对超时、EOF 或 TLS 错误，先读回 PR 与远端 refs，确认上一次写入是否已经成功，再进行有限重试。仍无法核实时停止下一步写操作，报告“合并成功但清理待完成”等精确状态，不把部分完成报告为全部完成。
 
-交付简洁说明 PR 链接、合并方式与最终 SHA、提交保留情况、远端删除和本地保留结果。只报告有证据的状态；新的 base CI 若仍运行，应区分它与合并前已经成功的检查。
+交付说明 PR 链接、所选模式及判断依据、合并方式与最终 SHA、主题提交保留情况、远端分支删除结果与本地分支保留结果。只报告有证据的状态，区分合并前的验证结果与合并后目标分支的 CI 状态；普通模式说明缺少对最新 base 的服务端集成检查保障。
