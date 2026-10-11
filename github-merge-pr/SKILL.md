@@ -10,7 +10,7 @@ description: 合并 GitHub PR 到 main，保持线性提交历史，删除远端
 ## 范围与授权
 
 - 优先使用 `gh` CLI；临时失败时可使用已连接的 GitHub 工具核对真实状态。不要把本机网络故障解释为仓库权限不足。
-- 技能被选中不等于用户授权合并、删除分支或重写历史。依据本次请求和已有授权执行；用户已经明确授权的动作不重复询问。
+- 技能被选中不等于用户授权合并、删除分支或重写历史。用户明确要求用本技能合并时，默认包含删除该 PR 的远端分支（明确要求保留时除外），无需再次确认；其他动作依据本次请求和已有授权执行。
 - 阅读目标仓库的 `AGENTS.md`。不夹带其他改动，不擅自更新架构、仓库合并设置或分支保护，不绕过规则、审查和 CI。
 - 仅处理已授权的审查修复；修复按主题提交到原 PR，验证后再 resolve。过期讨论不自动视为已修复。发布 PR 评论、联系审查者或建立持续监控需要相应授权。
 
@@ -74,7 +74,7 @@ gh api --hostname "$pr_host" --method PUT \
 - GitHub 合并完成后 fetch base remote，并在目标分支所属 worktree 中用 `--ff-only` 对齐本地 base 至已核对的远端结果。不能用可能创建 merge commit 的默认 `git pull`；本地分叉或脏文件冲突时保留现场并说明阻碍。
 - 验证合并前已保留的本地 topic 分支仍存在且保存此次工作。快进时它和 base 位于同一提交链。rebase/squash 后，旧本地 topic 可能让 `--graph --all` 仍然分叉：核对本地独有提交与 worktree 修改后，按已获授权对齐至合并结果；没有授权则说明限制并保留数据。
 - 禁止使用 `gh pr merge --delete-branch`，因为它会同时删除本地和远端分支；见 [CLI 文档](https://cli.github.com/manual/gh_pr_merge)。不要用 `git branch -d/-D` 或归档仍需保留的 worktree。
-- 只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
+- 永远不要删除本地或远端的 `main` 分支；合并或入队可能触发其自动删除时提前停止，并明确说明“未合并、未入队”。只删除 head 所属仓库的精确分支 ref，不能删除 base、默认分支或无关分支。删除前确认远端仍指向已验证 head；若已有新提交，停止清理并重新核对。若远端已自动删除，只验证即可。
 - 合并或入队前（考虑仓库自动删除）及手动删除前，检查两组开放 PR：以该分支为 base 的依赖 PR，以及以同一主机、head 仓库和分支为 source 的其他 PR。只从共享 source 结果中排除正在合并的 PR（按完整 PR URL），不能只按编号或 base 过滤。依赖 PR 会被自动 retarget，共享 source 的 PR 可能失去来源分支；停止可能触发删除的操作，说明受影响 PR，并取得对应跨 PR 变更的授权。查询失败、分页不完整或仓库/ref 为 null 时也停止，不把分支删除授权等同于修改其他 PR 的授权，见 [GitHub 分支删除副作用](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request)。
 
 **PR 关联预查不具备原子性。** 查询后仍可能新建依赖或共享 source 的 PR；SHA lease 只校验 ref 的提交位置，不能锁定 PR 关联集合。涉及可并发使用的分支时，触发删除前必须有能防止新关联的仓库侧协调窗口，或已有明确接受本次剩余并发影响的用户授权；仅授权删除该分支不能推定授权影响未知 PR。条件不满足时不执行手动删除，并保留远端分支报告待清理；自动删除可能触发相同影响时，在合并或入队前停止。不要为此擅自修改仓库设置或保护，见 [分支删除影响](https://docs.github.com/en/pull-requests/how-tos/commit-changes/managing-branches-within-your-repository#deleting-a-branch)。
@@ -122,7 +122,8 @@ git branch --unset-upstream "$local_topic"
 核对以下实际结果：
 
 - GitHub PR 已合并到指定 base，远端 base 包含已验证的改动。
-- 远端 head 分支不存在，本地 topic 分支存在；不能将远端跟踪 ref 误当成本地分支。
+- 默认远端 head 分支不存在，本地 topic 分支存在；不能将远端跟踪 ref 误当成本地分支。
+- 读取 base 仓库的实际远端分支列表；确实仅含 `main` 时才能报告“远端只保留 main”，否则列出剩余分支，不扩大本次 PR 的清理范围。
 - 合并新增区间没有 merge commit，原有主题提交按选定策略保留。`git log --graph --oneline --decorate --all` 显示目标链的真实形状；其他分支或既有 merge 节点影响全图时明确说明，不删除无关 refs 伪造直线。
 - 相关工作区原有未提交修改完整保留，没有额外改动。
 - 专门监控该 PR 的既有任务在确认合并后按原约定停止；没有现成监控时不另建任务。
