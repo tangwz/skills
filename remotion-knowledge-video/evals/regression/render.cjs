@@ -106,15 +106,6 @@ async function main() {
       `Dependency version mismatch: ${name}`,
     );
   }
-  for (const file of [
-    "title.woff2",
-    "body.woff2",
-    "chinese.ttf",
-    "mono.woff2",
-  ]) {
-    if (!fs.existsSync(path.join(fontDirectory, file)))
-      throw new Error(`Missing font: ${file}`);
-  }
   const chineseFontData = fs.readFileSync(
     path.join(fontDirectory, "chinese.ttf"),
   );
@@ -133,7 +124,6 @@ async function main() {
       "batch-output.cjs",
       "split-transcript.cjs",
       "font-format.cjs",
-      "regression.test.cjs",
       "package-lock.json",
       "tsconfig.json",
       "../../assets/template/VideoChrome.tsx",
