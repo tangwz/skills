@@ -14,6 +14,7 @@ const {
 } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
 const { detectChineseFontFormat } = require("./font-format.cjs");
+const { readVerificationReport, fileMatches } = require("./render.cjs");
 const ts = require("typescript");
 const React = require("react");
 
@@ -44,6 +45,70 @@ function loadClip() {
 }
 
 const { Diagram, fontSourcesFor, RenderRoot } = loadClip();
+
+test("verification evidence is reused only for matching inputs and environment", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "knowledge-evidence-"),
+  );
+  try {
+    const file = path.join(directory, "report.json");
+    const expected = {
+      environment: { node: "v18.20.8", platform: "darwin", arch: "arm64" },
+      implementationHashes: { "Clip.tsx": "clip-version" },
+      fontHashes: { "chinese.ttf": "font-version" },
+      transcriptSha256: "transcript-version",
+    };
+    const report = { ...expected, stills: [{ clip: "Batch-01", frame: 0 }] };
+    fs.writeFileSync(file, JSON.stringify(report));
+    assert.deepEqual(readVerificationReport(file, expected), report);
+    for (const key of Object.keys(expected)) {
+      assert.equal(
+        readVerificationReport(file, { ...expected, [key]: "changed" }),
+        null,
+        key,
+      );
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("missing or malformed verification reports rebuild while read errors remain visible", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-report-"));
+  try {
+    const file = path.join(directory, "report.json");
+    assert.equal(readVerificationReport(file, { environment: {} }), null);
+    fs.writeFileSync(file, "unfinished JSON");
+    assert.equal(readVerificationReport(file, { environment: {} }), null);
+    assert.throws(
+      () => readVerificationReport(directory, { environment: {} }),
+      { code: "EISDIR" },
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("verification file reuse rejects missing and changed bytes and follows relocated paths", () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "knowledge-verified-file-"),
+  );
+  try {
+    const oldFile = path.join(directory, "old.png");
+    const file = path.join(directory, "moved.png");
+    fs.writeFileSync(oldFile, "verified bytes");
+    const digest = sha256(oldFile);
+    fs.renameSync(oldFile, file);
+    assert.equal(fileMatches(file, digest), true);
+    assert.equal(fileMatches(oldFile, digest), false);
+    assert.equal(fileMatches(file, undefined), false);
+    fs.writeFileSync(file, "changed bytes");
+    assert.equal(fileMatches(file, digest), false);
+    assert.equal(fileMatches(directory, digest), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("Chinese font headers select the actual TTF or TTC loader format", () => {
   for (const [signature, expected] of [
