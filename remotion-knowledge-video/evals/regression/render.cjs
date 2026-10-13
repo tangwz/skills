@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const { isDeepStrictEqual } = require("node:util");
 const { spawnSync } = require("node:child_process");
 const { bundle } = require("@remotion/bundler");
 const {
@@ -12,6 +13,31 @@ const { splitTranscript } = require("./split-transcript.cjs");
 const { audioCoverage, buildPlans, stateAt } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
 const { detectChineseFontFormat } = require("./font-format.cjs");
+
+function readVerificationReport(file, expected) {
+  let report;
+  try {
+    report = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT" || error instanceof SyntaxError) return null;
+    throw error;
+  }
+  return Object.entries(expected).every(([key, value]) =>
+    isDeepStrictEqual(report?.[key], value),
+  )
+    ? report
+    : null;
+}
+
+function fileMatches(file, digest) {
+  if (!digest) return false;
+  try {
+    return sha256(file) === digest;
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "EISDIR") return false;
+    throw error;
+  }
+}
 
 function command(program, args) {
   const result = spawnSync(program, args, { encoding: "utf8" });
@@ -183,10 +209,12 @@ async function main() {
     writeTailSignal(path.join(publicDir, "tail-signal.wav"));
     fs.writeFileSync(plansFile, JSON.stringify(inputs, null, 2));
   }
+  const testFile = path.join(__dirname, "regression.test.cjs");
+  const testSourceSha256 = sha256(testFile);
   const unitOutput = command(process.execPath, [
     "--test",
     "--test-reporter=tap",
-    path.join(__dirname, "regression.test.cjs"),
+    testFile,
   ]);
   fs.writeFileSync(path.join(directory, "tests.tap"), unitOutput);
   const typeCheckOutput = command(process.execPath, [
@@ -195,6 +223,23 @@ async function main() {
     path.join(__dirname, "tsconfig.json"),
   ]);
   fs.writeFileSync(path.join(directory, "typecheck.log"), typeCheckOutput);
+  const environment = {
+    platform: process.platform,
+    arch: process.arch,
+    node: process.version,
+    dependencies,
+  };
+  const transcriptSha256 = sha256(
+    path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
+  );
+  const cachedReport = resume
+    ? readVerificationReport(path.join(directory, "report.json"), {
+        environment,
+        implementationHashes,
+        fontHashes,
+        transcriptSha256,
+      })
+    : null;
   const entry = path.join(directory, "entry.tsx");
   fs.writeFileSync(
     entry,
@@ -206,22 +251,26 @@ async function main() {
       "registerRoot(() => <RenderRoot {...data} />);",
     ].join("\n"),
   );
-  const serveUrl = await bundle({ entryPoint: entry, publicDir });
-  const compositions = {};
-  for (const plan of plans) {
-    const composition = await selectComposition({ serveUrl, id: plan.id });
+  let serveUrl;
+  const compositions = new Map();
+  const getComposition = async (id) => {
+    if (!serveUrl) serveUrl = await bundle({ entryPoint: entry, publicDir });
+    if (!compositions.has(id))
+      compositions.set(id, await selectComposition({ serveUrl, id }));
+    return compositions.get(id);
+  };
+  const render = async (plan, outputLocation) => {
+    const composition = await getComposition(plan.id);
     assert.equal(composition.durationInFrames, plan.totalFrames);
-    compositions[plan.id] = composition;
-  }
-  const render = (plan, outputLocation) =>
-    renderMedia({
+    return renderMedia({
       serveUrl,
-      composition: compositions[plan.id],
+      composition,
       outputLocation,
       codec: "h264",
       concurrency: 2,
       logLevel: "error",
     });
+  };
   // Exercise recovery with real encoded siblings, not only mocked file writes.
   let injectFailure = !resume;
   const calls = [];
@@ -262,6 +311,10 @@ async function main() {
     3,
   );
   const stills = [];
+  const cachedStills = Array.isArray(cachedReport?.stills)
+    ? cachedReport.stills
+    : [];
+  let reusedStills = 0;
   for (const plan of plans) {
     const holdStart = plan.totalFrames - plan.holdFrames;
     const frames = [
@@ -278,13 +331,21 @@ async function main() {
     ];
     for (const frame of frames) {
       const file = path.join(directory, `${plan.id}-${frame}.png`);
-      await renderStill({
-        serveUrl,
-        composition: compositions[plan.id],
-        frame,
-        output: file,
-        logLevel: "error",
-      });
+      const cached = cachedStills.find(
+        (still) => still.clip === plan.id && still.frame === frame,
+      );
+      if (fileMatches(file, cached?.sha256)) {
+        reusedStills++;
+      } else {
+        const composition = await getComposition(plan.id);
+        await renderStill({
+          serveUrl,
+          composition,
+          frame,
+          output: file,
+          logLevel: "error",
+        });
+      }
       stills.push({
         clip: plan.id,
         frame,
@@ -298,86 +359,103 @@ async function main() {
       sha256(path.join(directory, `${plan.id}-${plan.totalFrames - 1}.png`)),
     );
   }
-  const audioComposition = await selectComposition({
-    serveUrl,
-    id: "AudioCoverage",
-  });
   const audioDirectory = path.join(directory, "audio-coverage");
-  fs.mkdirSync(audioDirectory, { recursive: true });
   const mixedWav = path.join(audioDirectory, "mixed.wav");
-  await renderMedia({
-    serveUrl,
-    composition: audioComposition,
-    outputLocation: mixedWav,
-    codec: "wav",
-    audioCodec: "pcm-16",
-    sampleRate: 48000,
-    logLevel: "error",
-  });
   const silentVideo = path.join(audioDirectory, "silent.mp4");
-  await renderMedia({
-    serveUrl,
-    composition: audioComposition,
-    outputLocation: silentVideo,
-    codec: "h264",
-    muted: true,
-    logLevel: "error",
-  });
   const audioFile = path.join(audioDirectory, "audio-coverage-test.mp4");
-  // Encode once from lossless mixing; avoid intermediate ADTS priming offsets.
-  command("ffmpeg", [
-    "-y",
-    "-v",
-    "error",
-    "-i",
-    silentVideo,
-    "-i",
-    mixedWav,
-    "-map",
-    "0:v:0",
-    "-map",
-    "1:a:0",
-    "-c:v",
-    "copy",
-    "-c:a",
-    "aac",
-    "-t",
-    String(audioTest.totalFrames / 60),
-    audioFile,
-  ]);
-  verifyMedia({ fps: 60, totalFrames: audioTest.totalFrames }, audioFile);
   const pcmFile = path.join(audioDirectory, "decoded-audio.f32");
-  command("ffmpeg", [
-    "-y",
-    "-v",
-    "error",
-    "-i",
-    audioFile,
-    "-ar",
-    "48000",
-    "-ac",
-    "1",
-    "-f",
-    "f32le",
-    pcmFile,
-  ]);
-  const pcm = fs.readFileSync(pcmFile);
-  let peak = 0;
-  for (let sample = 48000; sample < 48192; sample++) {
-    assert.ok(sample * 4 + 4 <= pcm.length);
-    peak = Math.max(peak, Math.abs(pcm.readFloatLE(sample * 4)));
+  const audioFiles = [mixedWav, silentVideo, audioFile, pcmFile];
+  const audioSourceSha256 = sha256(path.join(publicDir, "tail-signal.wav"));
+  let audioTail = cachedReport?.audioTail;
+  const reusedAudioTail =
+    audioTail?.sourceSha256 === audioSourceSha256 &&
+    audioTail?.decodedFractionalTailPeak > 0.1 &&
+    audioFiles.every((file) =>
+      fileMatches(file, audioTail?.fileHashes?.[path.basename(file)]),
+    );
+  if (!reusedAudioTail) {
+    const audioComposition = await getComposition("AudioCoverage");
+    fs.mkdirSync(audioDirectory, { recursive: true });
+    await renderMedia({
+      serveUrl,
+      composition: audioComposition,
+      outputLocation: mixedWav,
+      codec: "wav",
+      audioCodec: "pcm-16",
+      sampleRate: 48000,
+      logLevel: "error",
+    });
+    await renderMedia({
+      serveUrl,
+      composition: audioComposition,
+      outputLocation: silentVideo,
+      codec: "h264",
+      muted: true,
+      logLevel: "error",
+    });
+    // Encode once from lossless mixing; avoid intermediate ADTS priming offsets.
+    command("ffmpeg", [
+      "-y",
+      "-v",
+      "error",
+      "-i",
+      silentVideo,
+      "-i",
+      mixedWav,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-t",
+      String(audioTest.totalFrames / 60),
+      audioFile,
+    ]);
+    verifyMedia({ fps: 60, totalFrames: audioTest.totalFrames }, audioFile);
+    command("ffmpeg", [
+      "-y",
+      "-v",
+      "error",
+      "-i",
+      audioFile,
+      "-ar",
+      "48000",
+      "-ac",
+      "1",
+      "-f",
+      "f32le",
+      pcmFile,
+    ]);
+    const pcm = fs.readFileSync(pcmFile);
+    let peak = 0;
+    for (let sample = 48000; sample < 48192; sample++) {
+      assert.ok(sample * 4 + 4 <= pcm.length);
+      peak = Math.max(peak, Math.abs(pcm.readFloatLE(sample * 4)));
+    }
+    assert.ok(peak > 0.1, "Fractional audio tail was truncated");
+    audioTail = {
+      ...audioTest,
+      retainedAudioSeconds: 1.004,
+      encoding: "Remotion PCM mixing, then a single AAC encode into MP4",
+      decodedFractionalTailPeak: peak,
+      sourceSha256: audioSourceSha256,
+      fileHashes: Object.fromEntries(
+        audioFiles.map((file) => [path.basename(file), sha256(file)]),
+      ),
+    };
   }
-  assert.ok(peak > 0.1, "Fractional audio tail was truncated");
   const report = {
     generatedAt: new Date().toISOString(),
     kind: "deterministic fixture regression, not a with/without-skill comparison",
-    transcriptSha256: sha256(
-      path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
-    ),
+    transcriptSha256,
     evalsSha256: sha256(path.join(__dirname, "../evals.json")),
     fontHashes,
     fontFormats: { "chinese.ttf": chineseFontFormat },
     unitTests: {
+      sourceSha256: testSourceSha256,
       count: Number(unitOutput.match(/# tests (\d+)/)[1]),
       passed: Number(unitOutput.match(/# pass (\d+)/)[1]),
       failed: Number(unitOutput.match(/# fail (\d+)/)[1]),
@@ -387,12 +465,7 @@ async function main() {
       passed: true,
       evidence: path.join(directory, "typecheck.log"),
     },
-    environment: {
-      platform: process.platform,
-      arch: process.arch,
-      node: process.version,
-      dependencies,
-    },
+    environment,
     implementationHashes,
     assumptions: {
       chineseCharactersPerSecond: 4,
@@ -406,13 +479,10 @@ async function main() {
       injectedFailure: resume ? null : plans[1].id,
       rerendered: calls,
       preservedSiblingHashes: preserved,
+      reusedStills,
+      reusedAudioTail,
     },
-    audioTail: {
-      ...audioTest,
-      retainedAudioSeconds: 1.004,
-      encoding: "Remotion PCM mixing, then a single AAC encode into MP4",
-      decodedFractionalTailPeak: peak,
-    },
+    audioTail,
     stills,
   };
   fs.writeFileSync(
@@ -432,7 +502,10 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+
+module.exports = { readVerificationReport, fileMatches };
