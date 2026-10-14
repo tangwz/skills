@@ -6,7 +6,7 @@ const textOf = (node) => {
   if (node.type === "html")
     return /^<br(?:\s[^>]*)?\/?\s*>$/i.test(node.value) ? " " : "";
   if (typeof node.value === "string")
-    return node.value.replace(/\r\n?|\n/g, " ");
+    return node.value.replace(/[ \t]*(?:\r\n?|\n)[ \t]*/g, " ");
   return (node.children ?? []).map(textOf).join("");
 };
 
