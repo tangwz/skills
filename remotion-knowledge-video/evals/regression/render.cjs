@@ -179,6 +179,7 @@ async function main() {
     : reserveBatch(path.resolve(outputTarget), "batch-regression");
   const plansFile = path.join(directory, "plans.json");
   const publicDir = path.join(directory, "public");
+  const tailSignalFile = path.join(publicDir, "tail-signal.wav");
   if (resume) {
     if (
       !fs.existsSync(plansFile) ||
@@ -187,10 +188,18 @@ async function main() {
       throw new Error(
         "Resume requires an existing batch with input snapshot and manifest",
       );
+    const { audioSourceSha256, ...originalInputs } = JSON.parse(
+      fs.readFileSync(plansFile, "utf8"),
+    );
     assert.deepEqual(
-      JSON.parse(fs.readFileSync(plansFile, "utf8")),
+      originalInputs,
       inputs,
       "Resume inputs changed or are unverifiable; reserve a new batch",
+    );
+    assert.equal(
+      sha256(tailSignalFile),
+      audioSourceSha256,
+      "Batch tail signal changed",
     );
     for (const [file, digest] of Object.entries(fontHashes))
       assert.equal(
@@ -206,8 +215,18 @@ async function main() {
         path.join(publicDir, file),
       );
     }
-    writeTailSignal(path.join(publicDir, "tail-signal.wav"));
-    fs.writeFileSync(plansFile, JSON.stringify(inputs, null, 2));
+    writeTailSignal(tailSignalFile);
+    fs.writeFileSync(
+      plansFile,
+      JSON.stringify(
+        {
+          ...inputs,
+          audioSourceSha256: sha256(tailSignalFile),
+        },
+        null,
+        2,
+      ),
+    );
   }
   const testFile = path.join(__dirname, "regression.test.cjs");
   const testSourceSha256 = sha256(testFile);
@@ -371,7 +390,7 @@ async function main() {
   const audioFile = path.join(audioDirectory, "audio-coverage-test.mp4");
   const pcmFile = path.join(audioDirectory, "decoded-audio.f32");
   const audioFiles = [mixedWav, silentVideo, audioFile, pcmFile];
-  const audioSourceSha256 = sha256(path.join(publicDir, "tail-signal.wav"));
+  const audioSourceSha256 = sha256(tailSignalFile);
   let audioTail = cachedReport?.audioTail;
   const reusedAudioTail =
     audioTail?.sourceSha256 === audioSourceSha256 &&
