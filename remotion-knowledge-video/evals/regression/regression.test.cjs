@@ -73,6 +73,37 @@ test("verification evidence is reused only for matching inputs and environment",
   }
 });
 
+for (const program of ["ffmpeg", "ffprobe"]) {
+  test(`a changed ${program} version invalidates media evidence`, () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-tool-version-"),
+    );
+    try {
+      const file = path.join(directory, "report.json");
+      const environment = {
+        node: process.version,
+        externalMediaTools: { ffmpeg: "build A", ffprobe: "build A" },
+      };
+      fs.writeFileSync(file, JSON.stringify({ environment }));
+      assert.ok(readVerificationReport(file, { environment }));
+      assert.equal(
+        readVerificationReport(file, {
+          environment: {
+            ...environment,
+            externalMediaTools: {
+              ...environment.externalMediaTools,
+              [program]: "build B",
+            },
+          },
+        }),
+        null,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+}
+
 test("missing or malformed verification reports rebuild while read errors remain visible", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-report-"));
   try {

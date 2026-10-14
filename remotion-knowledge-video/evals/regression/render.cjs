@@ -228,6 +228,12 @@ async function main() {
     arch: process.arch,
     node: process.version,
     dependencies,
+    externalMediaTools: Object.fromEntries(
+      ["ffmpeg", "ffprobe"].map((program) => [
+        program,
+        command(program, ["-version"]).trim(),
+      ]),
+    ),
   };
   const transcriptSha256 = sha256(
     path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
