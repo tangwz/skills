@@ -369,6 +369,85 @@ for (const invalid of ["missing", "changed"]) {
   });
 }
 
+for (const invalid of ["missing", "changed"]) {
+  test(`the renderer rejects a ${invalid} tail signal before resuming media verification`, () => {
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-tail-snapshot-"),
+    );
+    try {
+      const fonts = path.join(parent, "fonts");
+      const outputs = path.join(parent, "outputs");
+      fs.mkdirSync(fonts);
+      for (const file of ["title.woff2", "body.woff2", "mono.woff2"])
+        fs.writeFileSync(path.join(fonts, file), "test font bytes");
+      fs.writeFileSync(
+        path.join(fonts, "chinese.ttf"),
+        Buffer.from([0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      );
+      const preload = path.join(parent, "stop-after-snapshot.cjs");
+      fs.writeFileSync(
+        preload,
+        'require("node:child_process").spawnSync = () => { throw new Error("Reached test execution"); };',
+      );
+      const run = (args) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--require",
+            preload,
+            require.resolve("./render.cjs"),
+            ...args,
+            fonts,
+          ],
+          { encoding: "utf8", timeout: 10000 },
+        );
+      const created = run([outputs]);
+      assert.equal(created.status, 1, created.stderr);
+      assert.match(created.stderr, /Reached test execution/);
+      const directory = path.join(outputs, fs.readdirSync(outputs)[0]);
+      const source = path.join(directory, "public", "tail-signal.wav");
+      const inputs = JSON.parse(
+        fs.readFileSync(path.join(directory, "plans.json"), "utf8"),
+      );
+      assert.equal(inputs.audioSourceSha256, sha256(source));
+      fs.writeFileSync(
+        path.join(directory, "manifest.json"),
+        JSON.stringify({ clips: {} }),
+      );
+      if (invalid === "missing") fs.unlinkSync(source);
+      else {
+        const wav = fs.readFileSync(source);
+        wav.writeInt16LE(20000, 44);
+        fs.writeFileSync(source, wav);
+      }
+      const snapshot = () => {
+        const files = [
+          ...fs.readdirSync(directory).filter((file) => file !== "public"),
+          ...fs
+            .readdirSync(path.join(directory, "public"))
+            .map((file) => path.join("public", file)),
+        ];
+        return Object.fromEntries(
+          files.map((file) => [file, sha256(path.join(directory, file))]),
+        );
+      };
+      const before = snapshot();
+      const resumed = run(["--resume", directory]);
+      assert.equal(resumed.status, 1, resumed.stderr);
+      assert.match(
+        resumed.stderr,
+        invalid === "missing"
+          ? /ENOENT.*tail-signal.wav/
+          : /Batch tail signal changed/,
+      );
+      assert.doesNotMatch(resumed.stderr, /Reached test execution/);
+      assert.deepEqual(snapshot(), before);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
+
 test("source slices retain the three raw sections and ignore two empty sections", async () => {
   const source = fixture("transcript.md");
   const { metadataEnd, sections } = await splitTranscript(source);
