@@ -254,6 +254,36 @@ test("soft wraps preserve English words and CJK cue matching", async () => {
   }
 });
 
+test("soft-break whitespace preserves cue matching and spoken duration", async () => {
+  const source = fixture("transcript.md");
+  const original = buildPlans((await splitTranscript(source)).sections);
+  const phrase = original[0].cues[1].phrase;
+  for (const newline of ["\n", "\r\n"]) {
+    for (const [before, after] of [
+      [" ", ""],
+      ["\t", ""],
+      ["", "  "],
+      [" ", "\t "],
+    ]) {
+      const english = await splitTranscript(
+        `first${before}${newline}${after}second`,
+      );
+      assert.deepEqual(english.sections[0].paragraphs, ["first second"]);
+      assert.equal(speechBudget(english.sections[0].paragraphs[0]), 0.8);
+      const wrapped = source.replace(
+        phrase,
+        phrase.replace("token ", `token${before}${newline}${after}`),
+      );
+      const result = await splitTranscript(wrapped);
+      for (const section of result.sections)
+        assert.equal(section.raw, wrapped.slice(section.start, section.end));
+      const timing = (plans) =>
+        plans.map(({ cues, totalFrames }) => ({ cues, totalFrames }));
+      assert.deepEqual(timing(buildPlans(result.sections)), timing(original));
+    }
+  }
+});
+
 test("inline HTML tags do not contribute spoken words and br tags separate them", async () => {
   for (const [source, plain] of [
     ["This is <em>spoken</em>.", "This is spoken."],
