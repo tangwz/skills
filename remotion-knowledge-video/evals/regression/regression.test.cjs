@@ -571,6 +571,13 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
       path.join(os.tmpdir(), "knowledge-decode-resume-"),
     );
     try {
+      const skill = path.join(parent, "skill");
+      fs.cpSync(path.resolve(__dirname, "../.."), skill, {
+        recursive: true,
+        filter: (file) => path.basename(file) !== "node_modules",
+      });
+      const renderer = path.join(skill, "evals/regression/render.cjs");
+      const tests = path.join(skill, "evals/regression/regression.test.cjs");
       const fonts = path.join(parent, "fonts");
       const outputs = path.join(parent, "outputs");
       fs.mkdirSync(fonts);
@@ -594,10 +601,16 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
             ? {...exports, bundle: () => { throw new Error("Unexpected media rendering"); }}
             : exports;
         };
+        const rename = fs.renameSync;
+        fs.renameSync = (source, target) => {
+          if (process.env.KNOWLEDGE_FAIL_PUBLICATION && path.basename(target) === "report.json")
+            throw new Error("Report publication failed");
+          return rename(source, target);
+        };
         require("node:child_process").spawnSync = (program, args) => {
           if (process.env.KNOWLEDGE_PREPARE_SNAPSHOT) throw new Error("Snapshot prepared");
-          if (program === process.execPath) return {status: 0, stdout: "# tests 1\\n# pass 1\\n# fail 0\\n"};
-          if (args[0] === "-version") return {status: 0, stdout: program === ${JSON.stringify(changedTool)} ? "version B" : "version A"};
+          if (program === process.execPath) return {status: 0, stdout: args[0] === "--test" ? "# tests 2\\n# pass 2\\n# fail 0\\n" : "Current type check passed\\n"};
+          if (args[0] === "-version") return {status: 0, stdout: !process.env.KNOWLEDGE_PREVIOUS_TOOLS && program === ${JSON.stringify(changedTool)} ? "version B" : "version A"};
           if (program === "ffprobe") {
             const file = args[args.length - 1];
             const plans = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "plans.json"))).plans;
@@ -608,16 +621,10 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         };
       `,
       );
-      const run = (args, prepare = false) =>
+      const run = (args, flags = {}) =>
         spawnSync(
           process.execPath,
-          [
-            "--require",
-            preload,
-            require.resolve("./render.cjs"),
-            ...args,
-            fonts,
-          ],
+          ["--require", preload, renderer, ...args, fonts],
           {
             encoding: "utf8",
             timeout: 10000,
@@ -627,11 +634,11 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
                 path.dirname(
                   require.resolve("@remotion/bundler/package.json"),
                 ) + "/../..",
-              ...(prepare ? { KNOWLEDGE_PREPARE_SNAPSHOT: "1" } : {}),
+              ...flags,
             },
           },
         );
-      const prepared = run([outputs], true);
+      const prepared = run([outputs], { KNOWLEDGE_PREPARE_SNAPSHOT: "1" });
       assert.match(prepared.stderr, /Snapshot prepared/);
       const directory = path.join(outputs, fs.readdirSync(outputs)[0]);
       const inputs = JSON.parse(
@@ -644,6 +651,41 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         async () => ({ decoded: true }),
       );
       const reportFile = path.join(directory, "report.json");
+      const testEvidence = path.join(directory, "tests.tap");
+      const typeCheckEvidence = path.join(directory, "typecheck.log");
+      fs.writeFileSync(testEvidence, "# tests 1\n# pass 1\n# fail 0\n");
+      fs.writeFileSync(typeCheckEvidence, "Previous type check passed\n");
+      const stills = inputs.plans.flatMap((plan) => {
+        const frames = new Set([
+          0,
+          Math.round(plan.totalFrames / 2),
+          ...plan.cues.flatMap((cue) => [
+            Math.max(0, cue.startFrame - 1),
+            cue.startFrame + plan.transitionFrames,
+          ]),
+          plan.totalFrames - plan.holdFrames,
+          plan.totalFrames - 1,
+        ]);
+        return [...frames].map((frame) => {
+          const file = path.join(directory, `${plan.id}-${frame}.png`);
+          fs.writeFileSync(file, "cached still");
+          return { clip: plan.id, frame, sha256: sha256(file) };
+        });
+      });
+      const audioDirectory = path.join(directory, "audio-coverage");
+      fs.mkdirSync(audioDirectory);
+      const audioHashes = Object.fromEntries(
+        [
+          "mixed.wav",
+          "silent.mp4",
+          "audio-coverage-test.mp4",
+          "decoded-audio.f32",
+        ].map((name) => {
+          const file = path.join(audioDirectory, name);
+          fs.writeFileSync(file, "cached audio");
+          return [name, sha256(file)];
+        }),
+      );
       const previousReport = JSON.stringify({
         environment: {
           platform: process.platform,
@@ -657,11 +699,25 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         transcriptSha256: sha256(
           path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
         ),
+        unitTests: { sourceSha256: sha256(tests), evidence: testEvidence },
+        typeCheck: { passed: true, evidence: typeCheckEvidence },
+        stills,
+        audioTail: {
+          sourceSha256: inputs.audioSourceSha256,
+          decodedFractionalTailPeak: 0.5,
+          fileHashes: audioHashes,
+        },
       });
       fs.writeFileSync(reportFile, previousReport);
+      fs.appendFileSync(tests, "\n// Updated regression coverage.\n");
+      assert.notEqual(
+        sha256(tests),
+        JSON.parse(previousReport).unitTests.sourceSha256,
+      );
       const files = inputs.plans.map((plan) =>
         path.join(directory, `${plan.id}.mp4`),
       );
+      files.push(testEvidence, typeCheckEvidence);
       const snapshot = () =>
         files.map((file) => ({
           sha256: sha256(file),
@@ -674,6 +730,32 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
       assert.doesNotMatch(resumed.stderr, /Unexpected media rendering/);
       assert.equal(fs.readFileSync(reportFile, "utf8"), previousReport);
       assert.deepEqual(snapshot(), before);
+      const publicationFailure = run(["--resume", directory], {
+        KNOWLEDGE_PREVIOUS_TOOLS: "1",
+        KNOWLEDGE_FAIL_PUBLICATION: "1",
+      });
+      assert.equal(publicationFailure.status, 1, publicationFailure.stderr);
+      assert.match(publicationFailure.stderr, /Report publication failed/);
+      assert.equal(fs.readFileSync(reportFile, "utf8"), previousReport);
+      assert.deepEqual(snapshot(), before);
+      const successful = run(["--resume", directory], {
+        KNOWLEDGE_PREVIOUS_TOOLS: "1",
+      });
+      assert.equal(successful.status, 0, successful.stderr);
+      assert.deepEqual(snapshot(), before);
+      const current = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+      assert.equal(current.unitTests.sourceSha256, sha256(tests));
+      assert.equal(current.unitTests.passed, 2);
+      assert.notEqual(current.unitTests.evidence, testEvidence);
+      assert.notEqual(current.typeCheck.evidence, typeCheckEvidence);
+      assert.equal(
+        fs.readFileSync(current.unitTests.evidence, "utf8"),
+        "# tests 2\n# pass 2\n# fail 0\n",
+      );
+      assert.equal(
+        fs.readFileSync(current.typeCheck.evidence, "utf8"),
+        "Current type check passed\n",
+      );
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }
