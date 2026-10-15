@@ -106,6 +106,30 @@
         "Before-and-after evidence covers the opener, body, and ending of each registered video.",
         "The long-title layout remains outside the existing channel mark's occupied bounds."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "用这个技能新建一段 12 秒、1920×1080 的注意力机制图解。口播稿是：先将输入分别映射为 Q、K、V，再计算注意力权重，最后汇总结果。画面要有矩阵、连线、底部步骤导航和一个文字频道水印；步骤按口播节奏依次高亮。请提供可编辑代码和关键帧预览，不改已有作品，不发布，也不需要生成音频或编码完整视频。",
+      "expected_output": "新视频默认无口播字幕层且无新增字幕文件，保留图解标签；全片底部预留可配置的后期字幕区域，步骤导航、矩阵、连线和水印在动画全过程均位于其上方，内容完整可见。",
+      "files": [],
+      "expectations": [
+        "The production video has no narration caption layer, while diagram labels and step navigation remain visible.",
+        "No narration subtitle files are generated unless explicitly requested.",
+        "The actual layout reserves the configured bottom caption band plus content spacing even when no captions are rendered.",
+        "Matrices, connectors, step navigation, and the channel watermark remain fully visible above the reserved band and spacing throughout their motion.",
+        "Changing the shared caption reserve setting changes the actual content and bottom watermark bounds without editing individual scene coordinates."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "为同一频道新建一段 8 秒、1920×1080 的三步流程动画，口播文案用 Input enters the system. The system transforms the input. The result is ready. 这次明确需要在底部显示两行以内的英文口播字幕，同时交付 SRT 文件。字幕要与流程高亮同步，图解、步骤导航和水印不要被挡住。提供可编辑代码与关键帧，不生成旁白，不发布，不需要完整视频编码。",
+      "expected_output": "遵循显式请求输出同步字幕和 SRT，将字幕放在底部预留区内，图解及其他信息元素保持在其上方；字幕不受正文容器裁切。",
+      "files": [],
+      "expectations": [
+        "The production video renders the explicitly requested narration captions inside the reserved bottom band.",
+        "The delivered SRT matches the supplied narration and the rendered caption timing.",
+        "Captions remain fully visible without overlapping the diagram, navigation, or watermark."
+      ]
     }
   ]
 }

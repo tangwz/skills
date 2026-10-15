@@ -11,6 +11,7 @@ import { getGridTravelSeconds } from "./grid-motion";
 import { getEndCardTiming } from "./end-card-timing";
 import {
   getCanvasScale,
+  getContentBottomInset,
   publicAssetPath,
   VIDEO_REVEAL_EASE,
   VIDEO_STYLE,
@@ -113,6 +114,32 @@ export const getBrandMarkWidth = (
       ? 320
       : 0;
 
+export const KnowledgeContent = ({
+  theme = VIDEO_STYLE,
+  children,
+}: {
+  theme?: VideoStyle;
+  children: ReactNode;
+}) => {
+  const { width, height } = useVideoConfig();
+  const inset = theme.layout.safeMargin * getCanvasScale(width, height, theme);
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: inset,
+        left: inset,
+        right: inset,
+        bottom: getContentBottomInset(width, height, theme),
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </div>
+  );
+};
+
 export const BrandMark = ({
   fonts,
   theme = VIDEO_STYLE,
@@ -135,7 +162,9 @@ export const BrandMark = ({
       : {
           position: "absolute",
           right: inset,
-          ...(placement === "top-right" ? { top: inset } : { bottom: inset }),
+          ...(placement === "top-right"
+            ? { top: inset }
+            : { bottom: getContentBottomInset(width, height, theme) }),
         };
   if (!brand.logoPath && !brand.channelName) return null;
 
@@ -341,35 +370,37 @@ export const EpisodeOpener = ({
       {showBrand ? (
         <BrandMark fonts={fonts} theme={theme} brand={brand} />
       ) : null}
-      <div
-        style={{
-          position: "absolute",
-          left: theme.layout.safeMargin * scale,
-          right: theme.layout.safeMargin * scale,
-          top: "34%",
-        }}
-      >
-        <TitleCard
-          fonts={fonts}
-          theme={theme}
-          title={title}
-          kicker={kicker}
-          supportingText={supportingText}
-          size="display"
-        />
-        {showBrand && brand.tagline ? (
-          <div
-            style={{
-              marginTop: 40 * scale,
-              fontFamily: fonts.chinese,
-              fontSize: theme.typography.sizes.detail * scale,
-              color: theme.colors.muted,
-            }}
-          >
-            {brand.tagline}
-          </div>
-        ) : null}
-      </div>
+      <KnowledgeContent theme={theme}>
+        <div
+          style={{
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+          }}
+        >
+          <TitleCard
+            fonts={fonts}
+            theme={theme}
+            title={title}
+            kicker={kicker}
+            supportingText={supportingText}
+            size="display"
+          />
+          {showBrand && brand.tagline ? (
+            <div
+              style={{
+                marginTop: 40 * scale,
+                fontFamily: fonts.chinese,
+                fontSize: theme.typography.sizes.detail * scale,
+                color: theme.colors.muted,
+              }}
+            >
+              {brand.tagline}
+            </div>
+          ) : null}
+        </div>
+      </KnowledgeContent>
     </AbsoluteFill>
   );
 };
@@ -408,61 +439,63 @@ export const EpisodeEndCard = ({
           holdSeconds={timing.holdFrames / fps}
         />
       ) : null}
-      <div
-        style={{
-          position: "absolute",
-          left: theme.layout.safeMargin * scale,
-          right: theme.layout.safeMargin * scale,
-          top: "32%",
-          opacity: progress,
-          transform: `translateY(${(1 - progress) * 20 * scale}px)`,
-        }}
-      >
+      <KnowledgeContent theme={theme}>
         <div
           style={{
-            width: 64 * scale,
-            height: 5 * scale,
-            backgroundColor: theme.colors.orange,
-            marginBottom: 28 * scale,
-          }}
-        />
-        <div
-          style={{
-            fontFamily: fonts.body,
-            fontSize: theme.typography.sizes.label * scale,
-            fontWeight: theme.typography.weights.emphasis,
-            color: theme.colors.orange,
-            letterSpacing: "0.12em",
-            marginBottom: 22 * scale,
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            opacity: progress,
+            transform: `translateY(${(1 - progress) * 20 * scale}px)`,
           }}
         >
-          {label}
-        </div>
-        <div
-          style={{
-            fontFamily: fonts.chinese,
-            fontSize: theme.typography.sizes.takeaway * scale,
-            fontWeight: theme.typography.weights.title,
-            lineHeight: theme.typography.titleLineHeight,
-            textWrap: "balance",
-            color: theme.colors.ink,
-          }}
-        >
-          {takeaway}
-        </div>
-        {showBrand && brand.endNote ? (
           <div
             style={{
-              marginTop: 32 * scale,
-              fontFamily: fonts.chinese,
-              fontSize: theme.typography.sizes.body * scale,
-              color: theme.colors.muted,
+              width: 64 * scale,
+              height: 5 * scale,
+              backgroundColor: theme.colors.orange,
+              marginBottom: 28 * scale,
+            }}
+          />
+          <div
+            style={{
+              fontFamily: fonts.body,
+              fontSize: theme.typography.sizes.label * scale,
+              fontWeight: theme.typography.weights.emphasis,
+              color: theme.colors.orange,
+              letterSpacing: "0.12em",
+              marginBottom: 22 * scale,
             }}
           >
-            {brand.endNote}
+            {label}
           </div>
-        ) : null}
-      </div>
+          <div
+            style={{
+              fontFamily: fonts.chinese,
+              fontSize: theme.typography.sizes.takeaway * scale,
+              fontWeight: theme.typography.weights.title,
+              lineHeight: theme.typography.titleLineHeight,
+              textWrap: "balance",
+              color: theme.colors.ink,
+            }}
+          >
+            {takeaway}
+          </div>
+          {showBrand && brand.endNote ? (
+            <div
+              style={{
+                marginTop: 32 * scale,
+                fontFamily: fonts.chinese,
+                fontSize: theme.typography.sizes.body * scale,
+                color: theme.colors.muted,
+              }}
+            >
+              {brand.endNote}
+            </div>
+          ) : null}
+        </div>
+      </KnowledgeContent>
       {showBrand ? (
         <BrandMark
           fonts={fonts}

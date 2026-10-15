@@ -11,6 +11,7 @@ import {
   EpisodeOpener,
   getBrandMarkWidth,
   KnowledgeBackground,
+  KnowledgeContent,
   KnowledgePanel,
   TitleCard,
 } from "./VideoChrome";
@@ -74,10 +75,9 @@ const ProcessDiagram = ({
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
   const scale = getCanvasScale(width, height, theme);
-  const inset = theme.layout.safeMargin * scale;
   const brandWidth = getBrandMarkWidth(brand, theme);
   const titleRight =
-    inset + (brandWidth > 0 ? (brandWidth + theme.layout.gap) * scale : 0);
+    brandWidth > 0 ? (brandWidth + theme.layout.gap) * scale : 0;
   const progress = interpolate(frame, [0.25 * fps, 0.95 * fps], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
@@ -91,13 +91,13 @@ const ProcessDiagram = ({
   };
 
   return (
-    <AbsoluteFill>
+    <KnowledgeContent theme={theme}>
       <div
         style={{
           position: "absolute",
-          left: inset,
+          left: 0,
           right: titleRight,
-          top: 128 * scale,
+          top: 38 * scale,
         }}
       >
         <TitleCard
@@ -111,10 +111,10 @@ const ProcessDiagram = ({
       <div
         style={{
           position: "absolute",
-          left: inset,
-          right: inset,
+          left: 0,
+          right: 0,
           top: "48%",
-          bottom: "21%",
+          bottom: 0,
           display: "grid",
           gridTemplateColumns: "1fr 0.34fr 1.32fr 0.34fr 1fr",
           alignItems: "center",
@@ -252,7 +252,7 @@ const ProcessDiagram = ({
           </div>
         </div>
       </div>
-    </AbsoluteFill>
+    </KnowledgeContent>
   );
 };
 
