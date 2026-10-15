@@ -620,6 +620,7 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
             const plan = plans.find((plan) => file.endsWith(plan.id + ".mp4"));
             return {status: 0, stdout: JSON.stringify({streams: [{avg_frame_rate: plan.fps + "/1", nb_frames: String(plan.totalFrames), duration: String(plan.totalFrames / plan.fps)}]})};
           }
+          if (process.env.KNOWLEDGE_ACCEPT_DECODER) return {status: 0, stdout: ""};
           return {status: 71, stderr: "Current decoder rejected completed clip"};
         };
       `,
@@ -651,7 +652,12 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         directory,
         inputs.plans,
         (plan, file) => fs.writeFileSync(file, plan.id),
-        async () => ({ decoded: true }),
+        async (plan) => ({
+          fps: plan.fps,
+          frames: plan.totalFrames,
+          seconds: plan.totalFrames / plan.fps + 0.005,
+          decoded: true,
+        }),
       );
       const reportFile = path.join(directory, "report.json");
       const testEvidence = path.join(directory, "tests.tap");
@@ -795,6 +801,38 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         fs.readFileSync(current.typeCheck.evidence, "utf8"),
         "Current type check passed\n",
       );
+      const refreshed = run(["--resume", directory], {
+        KNOWLEDGE_ACCEPT_DECODER: "1",
+      });
+      assert.equal(refreshed.status, 1, refreshed.stderr);
+      assert.match(refreshed.stderr, /Unexpected media rendering/);
+      const refreshedManifest = JSON.parse(
+        fs.readFileSync(path.join(directory, "manifest.json"), "utf8"),
+      );
+      const expectedMedia = inputs.plans.map((plan) => ({
+        fps: plan.fps,
+        frames: plan.totalFrames,
+        seconds: plan.totalFrames / plan.fps,
+        decoded: true,
+      }));
+      assert.deepEqual(
+        inputs.plans.map((plan) => refreshedManifest.clips[plan.id].media),
+        expectedMedia,
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(reportFile, "utf8")),
+        current,
+      );
+      current.environment.externalMediaTools[changedTool] = "version B";
+      fs.writeFileSync(reportFile, JSON.stringify(current));
+      const consecutive = run(["--resume", directory]);
+      assert.equal(consecutive.status, 0, consecutive.stderr);
+      const consecutiveReport = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+      assert.deepEqual(
+        consecutiveReport.clips.map((clip) => clip.media),
+        expectedMedia,
+      );
+      assert.deepEqual(snapshot(), before);
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }

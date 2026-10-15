@@ -349,7 +349,16 @@ async function main() {
     new Set(Object.values(manifest.clips).map((clip) => clip.sha256)).size,
     3,
   );
-  for (const [id, media] of revalidatedMedia) manifest.clips[id].media = media;
+  if (revalidatedMedia.size > 0) {
+    for (const [id, media] of revalidatedMedia)
+      manifest.clips[id].media = media;
+    const manifestFile = path.join(directory, "manifest.json");
+    fs.writeFileSync(
+      `${manifestFile}.pending`,
+      JSON.stringify(manifest, null, 2) + "\n",
+    );
+    fs.renameSync(`${manifestFile}.pending`, manifestFile);
+  }
   const stills = [];
   const cachedStills = Array.isArray(cachedReport?.stills)
     ? cachedReport.stills
