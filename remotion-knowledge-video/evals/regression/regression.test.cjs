@@ -1331,6 +1331,72 @@ for (const [kind, groups] of Object.entries(resultLabels)) {
   });
 }
 
+test("landscape diagrams reserve complete label lines above default and enlarged caption areas", () => {
+  const {
+    getCanvasScale,
+    getContentBottomInset,
+    resolveVideoStyle,
+  } = require("../../assets/template/video-style.ts");
+  const nodes = (element) => {
+    if (!React.isValidElement(element)) return [];
+    return [
+      element,
+      ...React.Children.toArray(element.props.children).flatMap(nodes),
+    ];
+  };
+  for (const [width, height] of [
+    [640, 360],
+    [1920, 1080],
+    [2560, 1440],
+  ]) {
+    for (const ratio of [0.18, 0.28]) {
+      const theme = resolveVideoStyle({
+        layout: { captionSafeAreaRatio: ratio },
+      });
+      const scale = getCanvasScale(width, height, theme);
+      const contentBottom =
+        (height - getContentBottomInset(width, height, theme)) / scale;
+      for (const [kind, groups] of Object.entries(resultLabels)) {
+        const rendered = nodes(
+          Diagram({ kind, actions: [1, 1, 1], contentBottom }),
+        );
+        const labels = rendered.filter((node) => node.type === "text");
+        const conclusion = labels.find(
+          (node) => node.props.children === groups.at(-1)[0],
+        );
+        assert.ok(conclusion, kind);
+        for (const { props } of labels) {
+          // Reserve a full ascent and half an em of descent without clipping.
+          assert.ok(props.y - props.fontSize >= 260, props.children);
+          assert.ok(
+            props.y + props.fontSize / 2 <= contentBottom,
+            props.children,
+          );
+          assert.equal(props.fontSize, 42);
+          if (props !== conclusion.props) {
+            assert.ok(
+              props.y + props.fontSize / 2 <
+                conclusion.props.y - conclusion.props.fontSize,
+              `${kind}: conclusion overlaps ${props.children}`,
+            );
+          }
+        }
+        for (const { props } of rendered.filter(
+          (node) => node.type === "rect",
+        )) {
+          assert.ok(props.height > 0);
+          assert.ok(
+            props.y + props.height + (props.strokeWidth ?? 0) / 2 <
+              conclusion.props.y - conclusion.props.fontSize,
+          );
+        }
+        assert.equal(conclusion.props.x, 960);
+        assert.ok(conclusion.props.y * scale < height * (1 - ratio));
+      }
+    }
+  }
+});
+
 test("a new batch cannot overwrite an existing session directory", () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-batch-"));
   try {
