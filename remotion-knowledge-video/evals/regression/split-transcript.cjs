@@ -39,33 +39,21 @@ async function splitTranscript(source) {
   let parsedSource = source;
   let ast = await parsers.markdown.parse(parsedSource);
   let metadataEnd = 0;
-  const first = ast.children[0];
-  if (first?.type === "frontMatter") {
-    let metadata;
-    try {
-      metadata = yaml.load(first.value);
-    } catch {
-      metadata = null;
-    }
-    if (isKnownMetadata(metadata)) {
-      metadataEnd = first.position.end.offset;
-    } else {
-      // Keep offsets while preventing a front-matter guess from swallowing speech.
-      parsedSource = source.replace(/^(\uFEFF?)---(?=\r?\n)/, "$1***");
-      ast = await parsers.markdown.parse(parsedSource);
-    }
-  }
   // A standalone br otherwise starts an HTML block that swallows following speech.
   const stripBreakBlocks = (node) => {
+    // Inline breaks are normalized by textOf without rewriting Markdown syntax.
+    if (["paragraph", "heading"].includes(node.type)) return;
     if (
       node.type === "html" &&
-      /^[ \t]*<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>[ \t]*\r?\n/i.test(node.value)
+      /^[ \t]*<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>[ \t]*(?:\r?\n|$)/i.test(
+        node.value,
+      )
     ) {
       const { start, end } = node.position;
       const cleaned = parsedSource
         .slice(start.offset, end.offset)
         .replace(
-          /^(?:[ \t>]*<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>[ \t]*\r?\n)+/i,
+          /^(?:[ \t>]*<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>[ \t]*(?:\r?\n|$))+/i,
           (prefix) =>
             prefix.replace(/<br[^>\r\n]*>/gi, (tag) => " ".repeat(tag.length)),
         );
@@ -76,9 +64,32 @@ async function splitTranscript(source) {
     }
     for (const child of node.children ?? []) stripBreakBlocks(child);
   };
-  // Reparsing can expose another br block inside a list or quote.
+  // Reparsing can expose front matter or another br block inside a list or quote.
   for (;;) {
     const beforeCleanup = parsedSource;
+    const first = ast.children[0];
+    if (first?.type === "frontMatter") {
+      let metadata;
+      try {
+        metadata = yaml.load(first.value);
+      } catch {
+        metadata = null;
+      }
+      if (isKnownMetadata(metadata)) {
+        metadataEnd = first.position.end.offset;
+      } else {
+        // Keep offsets while preventing a front-matter guess from swallowing speech.
+        const offset = first.position.start.offset;
+        parsedSource =
+          parsedSource.slice(0, offset) +
+          parsedSource
+            .slice(offset)
+            .replace(
+              /^---([ \t]*)(?=\r?\n)/,
+              (_, whitespace) => "***" + " ".repeat(whitespace.length),
+            );
+      }
+    }
     stripBreakBlocks(ast);
     if (parsedSource === beforeCleanup) break;
     ast = await parsers.markdown.parse(parsedSource);
