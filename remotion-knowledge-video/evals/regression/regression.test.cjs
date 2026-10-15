@@ -442,6 +442,165 @@ test("only Markdown rules split clips while blank lines and empty markup add no 
     assert.equal(section.raw, source.slice(section.start, section.end));
 });
 
+test("standalone br lines preserve spoken sections, timing and source offsets", async () => {
+  const source = fixture("transcript.md");
+  const original = buildPlans((await splitTranscript(source)).sections);
+  const speech = original[0].spokenText;
+  for (const newline of ["\n", "\r\n"]) {
+    for (const tag of ["<br>", "<BR />", "<br class='line'>"]) {
+      const changed = source
+        .replace(speech, `${tag}\n${tag}\n${speech}`)
+        .replaceAll("\n", newline);
+      const { sections } = await splitTranscript(changed);
+      const plans = buildPlans(sections);
+      assert.deepEqual(
+        plans.map(({ spokenText, cues, totalFrames }) => ({
+          spokenText,
+          cues,
+          totalFrames,
+        })),
+        original.map(({ spokenText, cues, totalFrames }) => ({
+          spokenText,
+          cues,
+          totalFrames,
+        })),
+      );
+      for (const section of sections)
+        assert.equal(section.raw, changed.slice(section.start, section.end));
+    }
+  }
+});
+
+test("br cleanup preserves nested speech and keeps actual HTML and code unspoken", async () => {
+  for (const container of ["", "> ", "- "]) {
+    const continuation = container === "- " ? "  " : container;
+    const source = `${container}<br>\n${continuation}**<br>**\n${continuation}First spoken paragraph.\n\n<div>\n<br>\nHidden HTML sentence.\n</div>\n\n~~~text\n<br>\nHidden code sentence.\n---\n~~~\n\n---\n\nSecond spoken paragraph.\n`;
+    const { sections } = await splitTranscript(source);
+    assert.equal(sections.length, 2);
+    assert.deepEqual(
+      sections.map((section) => section.paragraphs),
+      [["First spoken paragraph."], ["Second spoken paragraph."]],
+    );
+    for (const section of sections)
+      assert.equal(section.raw, source.slice(section.start, section.end));
+  }
+});
+
+for (const changedTool of ["ffmpeg", "ffprobe"]) {
+  test(`a changed ${changedTool} cannot reuse completed-clip decode claims`, async () => {
+    const parent = fs.mkdtempSync(
+      path.join(os.tmpdir(), "knowledge-decode-resume-"),
+    );
+    try {
+      const fonts = path.join(parent, "fonts");
+      const outputs = path.join(parent, "outputs");
+      fs.mkdirSync(fonts);
+      for (const file of ["title.woff2", "body.woff2", "mono.woff2"])
+        fs.writeFileSync(path.join(fonts, file), "test font bytes");
+      fs.writeFileSync(
+        path.join(fonts, "chinese.ttf"),
+        Buffer.from([0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      );
+      const preload = path.join(parent, "decoder.cjs");
+      fs.writeFileSync(
+        preload,
+        `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const Module = require("node:module");
+        const load = Module._load;
+        Module._load = function(name, ...args) {
+          const exports = load.call(this, name, ...args);
+          return name === "@remotion/bundler"
+            ? {...exports, bundle: () => { throw new Error("Unexpected media rendering"); }}
+            : exports;
+        };
+        require("node:child_process").spawnSync = (program, args) => {
+          if (process.env.KNOWLEDGE_PREPARE_SNAPSHOT) throw new Error("Snapshot prepared");
+          if (program === process.execPath) return {status: 0, stdout: "# tests 1\\n# pass 1\\n# fail 0\\n"};
+          if (args[0] === "-version") return {status: 0, stdout: program === ${JSON.stringify(changedTool)} ? "version B" : "version A"};
+          if (program === "ffprobe") {
+            const file = args[args.length - 1];
+            const plans = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "plans.json"))).plans;
+            const plan = plans.find((plan) => file.endsWith(plan.id + ".mp4"));
+            return {status: 0, stdout: JSON.stringify({streams: [{avg_frame_rate: plan.fps + "/1", nb_frames: String(plan.totalFrames), duration: String(plan.totalFrames / plan.fps)}]})};
+          }
+          return {status: 71, stderr: "Current decoder rejected completed clip"};
+        };
+      `,
+      );
+      const run = (args, prepare = false) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--require",
+            preload,
+            require.resolve("./render.cjs"),
+            ...args,
+            fonts,
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10000,
+            env: {
+              ...process.env,
+              NODE_PATH:
+                path.dirname(
+                  require.resolve("@remotion/bundler/package.json"),
+                ) + "/../..",
+              ...(prepare ? { KNOWLEDGE_PREPARE_SNAPSHOT: "1" } : {}),
+            },
+          },
+        );
+      const prepared = run([outputs], true);
+      assert.match(prepared.stderr, /Snapshot prepared/);
+      const directory = path.join(outputs, fs.readdirSync(outputs)[0]);
+      const inputs = JSON.parse(
+        fs.readFileSync(path.join(directory, "plans.json"), "utf8"),
+      );
+      await renderBatch(
+        directory,
+        inputs.plans,
+        (plan, file) => fs.writeFileSync(file, plan.id),
+        async () => ({ decoded: true }),
+      );
+      const reportFile = path.join(directory, "report.json");
+      const previousReport = JSON.stringify({
+        environment: {
+          platform: process.platform,
+          arch: process.arch,
+          node: process.version,
+          dependencies: inputs.dependencies,
+          externalMediaTools: { ffmpeg: "version A", ffprobe: "version A" },
+        },
+        implementationHashes: inputs.implementationHashes,
+        fontHashes: inputs.fontHashes,
+        transcriptSha256: sha256(
+          path.join(__dirname, "../fixtures/batch-transcript/transcript.md"),
+        ),
+      });
+      fs.writeFileSync(reportFile, previousReport);
+      const files = inputs.plans.map((plan) =>
+        path.join(directory, `${plan.id}.mp4`),
+      );
+      const snapshot = () =>
+        files.map((file) => ({
+          sha256: sha256(file),
+          mtime: fs.statSync(file).mtimeMs,
+        }));
+      const before = snapshot();
+      const resumed = run(["--resume", directory]);
+      assert.equal(resumed.status, 1, resumed.stderr);
+      assert.match(resumed.stderr, /Current decoder rejected completed clip/);
+      assert.doesNotMatch(resumed.stderr, /Unexpected media rendering/);
+      assert.equal(fs.readFileSync(reportFile, "utf8"), previousReport);
+      assert.deepEqual(snapshot(), before);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
+
 test("a hard break inside a cue preserves its plan and duration", async () => {
   const source = fixture("transcript.md");
   const { sections } = await splitTranscript(source);

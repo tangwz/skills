@@ -335,6 +335,12 @@ async function main() {
     new Set(Object.values(manifest.clips).map((clip) => clip.sha256)).size,
     3,
   );
+  if (resume && !cachedReport) {
+    for (const plan of plans) {
+      const clip = manifest.clips[plan.id];
+      clip.media = verifyMedia(plan, clip.file);
+    }
+  }
   const stills = [];
   const cachedStills = Array.isArray(cachedReport?.stills)
     ? cachedReport.stills

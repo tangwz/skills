@@ -55,6 +55,30 @@ async function splitTranscript(source) {
       ast = await parsers.markdown.parse(parsedSource);
     }
   }
+  // A standalone br otherwise starts an HTML block that swallows following speech.
+  const stripBreakBlocks = (node) => {
+    if (
+      node.type === "html" &&
+      /^[ \t]*<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>[ \t]*\r?\n/i.test(node.value)
+    ) {
+      const { start, end } = node.position;
+      const cleaned = parsedSource
+        .slice(start.offset, end.offset)
+        .replace(
+          /<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>(?=[ \t]*(?:\r?\n|$))/gi,
+          (tag) => " ".repeat(tag.length),
+        );
+      parsedSource =
+        parsedSource.slice(0, start.offset) +
+        cleaned +
+        parsedSource.slice(end.offset);
+    }
+    for (const child of node.children ?? []) stripBreakBlocks(child);
+  };
+  const beforeCleanup = parsedSource;
+  stripBreakBlocks(ast);
+  if (parsedSource !== beforeCleanup)
+    ast = await parsers.markdown.parse(parsedSource);
   const sections = [];
   let start = metadataEnd;
   let nodes = [];
