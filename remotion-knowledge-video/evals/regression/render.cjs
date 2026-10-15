@@ -263,6 +263,22 @@ async function main() {
         transcriptSha256,
       })
     : null;
+  const previousManifest = resume
+    ? JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"))
+    : null;
+  const revalidatedMedia = new Map();
+  if (previousManifest && !cachedReport) {
+    for (const plan of plans) {
+      const clip = previousManifest.clips[plan.id];
+      if (clip?.status !== "complete" && clip?.status !== "ready") continue;
+      const file = path.join(directory, `${plan.id}.mp4`);
+      const candidate =
+        clip.status === "ready" && !fs.existsSync(file)
+          ? path.join(directory, `${plan.id}.pending.mp4`)
+          : file;
+      revalidatedMedia.set(plan.id, verifyMedia(plan, candidate));
+    }
+  }
   const entry = path.join(directory, "entry.tsx");
   fs.writeFileSync(
     entry,
@@ -303,9 +319,9 @@ async function main() {
       throw new Error("Injected second-clip failure");
     await render(plan, output);
   };
-  const first = resume
-    ? JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"))
-    : await renderBatch(directory, plans, injectedRender, verifyMedia);
+  const first =
+    previousManifest ??
+    (await renderBatch(directory, plans, injectedRender, verifyMedia));
   if (!resume) assert.equal(first.clips[plans[1].id].status, "failed");
   const completed = plans.filter(
     (plan) => first.clips[plan.id]?.status === "complete",
@@ -333,12 +349,7 @@ async function main() {
     new Set(Object.values(manifest.clips).map((clip) => clip.sha256)).size,
     3,
   );
-  if (resume && !cachedReport) {
-    for (const plan of plans) {
-      const clip = manifest.clips[plan.id];
-      clip.media = verifyMedia(plan, clip.file);
-    }
-  }
+  for (const [id, media] of revalidatedMedia) manifest.clips[id].media = media;
   const stills = [];
   const cachedStills = Array.isArray(cachedReport?.stills)
     ? cachedReport.stills
