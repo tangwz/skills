@@ -70,7 +70,7 @@ function verifyMedia(plan, file) {
     Math.abs(Number(metadata.duration) - plan.totalFrames / plan.fps) <
       1 / plan.fps,
   );
-  command("ffmpeg", ["-v", "error", "-i", file, "-f", "null", "-"]);
+  command("ffmpeg", ["-v", "error", "-xerror", "-i", file, "-f", "null", "-"]);
   return {
     fps: numerator / denominator,
     frames: Number(metadata.nb_frames),
@@ -444,6 +444,7 @@ async function main() {
       "-y",
       "-v",
       "error",
+      "-xerror",
       "-i",
       audioFile,
       "-ar",
@@ -533,4 +534,4 @@ if (require.main === module)
     process.exitCode = 1;
   });
 
-module.exports = { readVerificationReport, fileMatches };
+module.exports = { readVerificationReport, fileMatches, verifyMedia };

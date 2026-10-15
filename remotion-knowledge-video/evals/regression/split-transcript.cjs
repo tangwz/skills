@@ -5,19 +5,18 @@ const textOf = (node) => {
   if (node.type === "break") return " ";
   if (node.type === "html")
     return /^<br(?:\s[^>]*)?\/?\s*>$/i.test(node.value) ? " " : "";
-  if (typeof node.value === "string")
-    return node.value.replace(/[ \t]*(?:\r\n?|\n)[ \t]*/g, " ");
+  if (typeof node.value === "string") return node.value;
   return (node.children ?? []).map(textOf).join("");
 };
 
 function paragraphsOf(node) {
   if (["code", "html", "frontMatter"].includes(node.type)) return [];
   if (node.type === "paragraph") {
-    const text = textOf(node).replace(
-      /(\p{Script=Han})\s+(?=\p{Script=Han})/gu,
-      "$1",
-    );
-    return text.trim() ? [text] : [];
+    const text = textOf(node)
+      .replace(/\s+/gu, " ")
+      .replace(/(\p{Script=Han}) +(?=\p{Script=Han})/gu, "$1")
+      .trim();
+    return text ? [text] : [];
   }
   return (node.children ?? []).flatMap(paragraphsOf);
 }

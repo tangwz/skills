@@ -14,7 +14,11 @@ const {
 } = require("./timing.cjs");
 const { reserveBatch, renderBatch, sha256 } = require("./batch-output.cjs");
 const { detectChineseFontFormat } = require("./font-format.cjs");
-const { readVerificationReport, fileMatches } = require("./render.cjs");
+const {
+  readVerificationReport,
+  fileMatches,
+  verifyMedia,
+} = require("./render.cjs");
 const ts = require("typescript");
 const React = require("react");
 
@@ -45,6 +49,82 @@ function loadClip() {
 }
 
 const { Diagram, fontSourcesFor, RenderRoot } = loadClip();
+
+test("media verification rejects a damaged packet despite intact stream metadata", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "knowledge-decode-"));
+  try {
+    const file = path.join(directory, "probe.mp4");
+    const encoded = spawnSync(
+      "ffmpeg",
+      [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=size=32x32:rate=60",
+        "-frames:v",
+        "12",
+        "-c:v",
+        "libx264",
+        "-bf",
+        "0",
+        file,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.ifError(encoded.error);
+    assert.equal(encoded.status, 0, encoded.stderr);
+    const plan = { fps: 60, totalFrames: 12 };
+    assert.equal(verifyMedia(plan, file).decoded, true);
+    const probe = spawnSync(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_packets",
+        "-show_entries",
+        "packet=pos,size",
+        "-of",
+        "json",
+        file,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.ifError(probe.error);
+    assert.equal(probe.status, 0, probe.stderr);
+    const packet = JSON.parse(probe.stdout).packets[1];
+    const bytes = fs.readFileSync(file);
+    bytes.fill(0, Number(packet.pos), Number(packet.pos) + Number(packet.size));
+    fs.writeFileSync(file, bytes);
+    const metadata = spawnSync(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=avg_frame_rate,nb_frames,duration",
+        "-of",
+        "json",
+        file,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.ifError(metadata.error);
+    assert.equal(metadata.status, 0, metadata.stderr);
+    const stream = JSON.parse(metadata.stdout).streams[0];
+    assert.equal(stream.avg_frame_rate, "60/1");
+    assert.equal(Number(stream.nb_frames), plan.totalFrames);
+    assert.equal(Number(stream.duration), plan.totalFrames / plan.fps);
+    assert.throws(() => verifyMedia(plan, file));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("verification evidence is reused only for matching inputs and environment", () => {
   const directory = fs.mkdtempSync(
@@ -323,6 +403,43 @@ test("inline HTML around a cue preserves its duration and trigger", async () => 
       original.map((plan) => plan.totalFrames),
     );
   }
+});
+
+test("whitespace across inline nodes preserves cue matching and duration", async () => {
+  const source = fixture("transcript.md");
+  const original = buildPlans((await splitTranscript(source)).sections);
+  const phrase = original[0].cues[1].phrase;
+  for (const newline of ["\n", "\r\n"]) {
+    for (const rendered of [
+      `token <em>${newline}数量保持不变</em>`,
+      `<em>token </em>${newline}数量保持不变`,
+      `token <br>${newline}数量保持不变`,
+      `token \\${newline} 数量保持不变`,
+      "token \t <br />  数量保持不变",
+      "token <em> \t </em> 数量保持不变",
+    ]) {
+      const wrapped = source.replace(phrase, rendered);
+      const result = await splitTranscript(wrapped);
+      for (const section of result.sections)
+        assert.equal(section.raw, wrapped.slice(section.start, section.end));
+      const timing = (plans) =>
+        plans.map(({ cues, totalFrames }) => ({ cues, totalFrames }));
+      assert.deepEqual(timing(buildPlans(result.sections)), timing(original));
+    }
+  }
+});
+
+test("only Markdown rules split clips while blank lines and empty markup add no speech", async () => {
+  const source =
+    " \n\n<br>\n\n\t \n\nfirst <br>\n  second\n\n**<br>**\n\n---\n\n<br />\n\n \t\n\n***\n\nthird\n\n";
+  const { sections } = await splitTranscript(source);
+  assert.equal(sections.length, 3);
+  assert.deepEqual(
+    sections.map((section) => section.paragraphs),
+    [["first second"], [], ["third"]],
+  );
+  for (const section of sections)
+    assert.equal(section.raw, source.slice(section.start, section.end));
 });
 
 test("a hard break inside a cue preserves its plan and duration", async () => {
