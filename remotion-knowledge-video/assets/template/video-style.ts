@@ -51,6 +51,7 @@ export const VIDEO_STYLE = {
   },
   layout: {
     safeMargin: 90,
+    captionSafeAreaRatio: 0.18,
     panelRadius: 22,
     panelPadding: 40,
     gap: 32,
@@ -114,6 +115,18 @@ export const getCanvasScale = (
   height: number,
   theme = VIDEO_STYLE,
 ): number => Math.min(width / theme.canvas.width, height / theme.canvas.height);
+
+export const getContentBottomInset = (
+  width: number,
+  height: number,
+  theme = VIDEO_STYLE,
+): number => {
+  const scale = getCanvasScale(width, height, theme);
+  return Math.max(
+    theme.layout.safeMargin * scale,
+    height * theme.layout.captionSafeAreaRatio + theme.layout.gap * scale,
+  );
+};
 
 export const publicAssetPath = (path: string): string => {
   if (
