@@ -65,8 +65,9 @@ async function splitTranscript(source) {
       const cleaned = parsedSource
         .slice(start.offset, end.offset)
         .replace(
-          /<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>(?=[ \t]*(?:\r?\n|$))/gi,
-          (tag) => " ".repeat(tag.length),
+          /^(?:[ \t>]*<br(?:[ \t][^>\r\n]*)?\/?[ \t]*>[ \t]*\r?\n)+/i,
+          (prefix) =>
+            prefix.replace(/<br[^>\r\n]*>/gi, (tag) => " ".repeat(tag.length)),
         );
       parsedSource =
         parsedSource.slice(0, start.offset) +

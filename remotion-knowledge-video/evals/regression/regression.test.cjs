@@ -471,6 +471,47 @@ test("standalone br lines preserve spoken sections, timing and source offsets", 
   }
 });
 
+test("leading and internal br lines together preserve paragraph boundaries and narration cues", async () => {
+  const source = fixture("transcript.md");
+  const originalSections = (await splitTranscript(source)).sections;
+  const originalPlans = buildPlans(originalSections);
+  const speech = originalPlans[0].spokenText;
+  const phrase = originalPlans[0].cues[1].phrase;
+  const summary = (plans) =>
+    plans.map(({ title, spokenText, cues, totalFrames }) => ({
+      title,
+      spokenText,
+      cues,
+      totalFrames,
+    }));
+  for (const newline of ["\n", "\r\n"]) {
+    for (const tag of ["<br>", "<BR />", "<br class='line'>"]) {
+      for (const container of ["", "> ", "- "]) {
+        const wrapped = speech.replace(
+          phrase,
+          phrase.replace("token ", `token\n${tag}\n`),
+        );
+        const body = `${tag}\n${tag}\n${wrapped}`
+          .split("\n")
+          .map((line, index) => {
+            const prefix = container === "- " && index > 0 ? "  " : container;
+            return prefix + line;
+          })
+          .join("\n");
+        const changed = source.replace(speech, body).replaceAll("\n", newline);
+        const { sections } = await splitTranscript(changed);
+        assert.deepEqual(
+          sections.map((section) => section.paragraphs),
+          originalSections.map((section) => section.paragraphs),
+        );
+        assert.deepEqual(summary(buildPlans(sections)), summary(originalPlans));
+        for (const section of sections)
+          assert.equal(section.raw, changed.slice(section.start, section.end));
+      }
+    }
+  }
+});
+
 test("br cleanup preserves nested speech and keeps actual HTML and code unspoken", async () => {
   for (const container of ["", "> ", "- "]) {
     const continuation = container === "- " ? "  " : container;
