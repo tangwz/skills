@@ -76,10 +76,13 @@ async function splitTranscript(source) {
     }
     for (const child of node.children ?? []) stripBreakBlocks(child);
   };
-  const beforeCleanup = parsedSource;
-  stripBreakBlocks(ast);
-  if (parsedSource !== beforeCleanup)
+  // Reparsing can expose another br block inside a list or quote.
+  for (;;) {
+    const beforeCleanup = parsedSource;
+    stripBreakBlocks(ast);
+    if (parsedSource === beforeCleanup) break;
     ast = await parsers.markdown.parse(parsedSource);
+  }
   const sections = [];
   let start = metadataEnd;
   let nodes = [];
