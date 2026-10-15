@@ -598,7 +598,10 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         Module._load = function(name, ...args) {
           const exports = load.call(this, name, ...args);
           return name === "@remotion/bundler"
-            ? {...exports, bundle: () => { throw new Error("Unexpected media rendering"); }}
+            ? {...exports, bundle: () => {
+                if (process.env.KNOWLEDGE_RENDER_MARKER) fs.writeFileSync(process.env.KNOWLEDGE_RENDER_MARKER, "called");
+                throw new Error("Unexpected media rendering");
+              }}
             : exports;
         };
         const rename = fs.renameSync;
@@ -718,8 +721,8 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
         path.join(directory, `${plan.id}.mp4`),
       );
       files.push(testEvidence, typeCheckEvidence);
-      const snapshot = () =>
-        files.map((file) => ({
+      const snapshot = (paths = files) =>
+        paths.map((file) => ({
           sha256: sha256(file),
           mtime: fs.statSync(file).mtimeMs,
         }));
@@ -729,6 +732,42 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
       assert.match(resumed.stderr, /Current decoder rejected completed clip/);
       assert.doesNotMatch(resumed.stderr, /Unexpected media rendering/);
       assert.equal(fs.readFileSync(reportFile, "utf8"), previousReport);
+      assert.deepEqual(snapshot(), before);
+      const partialDirectory = path.join(parent, "partial-batch");
+      fs.cpSync(directory, partialDirectory, { recursive: true });
+      const manifestFile = path.join(partialDirectory, "manifest.json");
+      const partialManifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+      const failedPlan = inputs.plans[0];
+      partialManifest.clips[failedPlan.id] = {
+        status: "failed",
+        error: "Earlier render failed",
+      };
+      fs.rmSync(path.join(partialDirectory, `${failedPlan.id}.mp4`));
+      fs.writeFileSync(manifestFile, JSON.stringify(partialManifest));
+      const partialNames = fs.readdirSync(partialDirectory);
+      const partialFiles = partialNames
+        .map((name) => path.join(partialDirectory, name))
+        .filter((file) => fs.statSync(file).isFile());
+      const partialBefore = snapshot(partialFiles);
+      const renderMarker = path.join(parent, "render-called");
+      const partialResume = run(["--resume", partialDirectory], {
+        KNOWLEDGE_RENDER_MARKER: renderMarker,
+      });
+      assert.equal(partialResume.status, 1, partialResume.stderr);
+      assert.equal(
+        fs.existsSync(renderMarker),
+        false,
+        "Render ran before completed-clip preflight",
+      );
+      assert.match(
+        partialResume.stderr,
+        /Current decoder rejected completed clip/,
+      );
+      assert.deepEqual(snapshot(partialFiles), partialBefore);
+      assert.deepEqual(
+        fs.readdirSync(partialDirectory).sort(),
+        partialNames.sort(),
+      );
       assert.deepEqual(snapshot(), before);
       const publicationFailure = run(["--resume", directory], {
         KNOWLEDGE_PREVIOUS_TOOLS: "1",
