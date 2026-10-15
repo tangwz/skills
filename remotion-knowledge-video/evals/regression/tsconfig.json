@@ -6,7 +6,12 @@
     "jsx": "react-jsx",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "remotion": ["./node_modules/remotion"]
+    },
     "moduleResolution": "node",
     "module": "commonjs",
     "target": "ES2022",

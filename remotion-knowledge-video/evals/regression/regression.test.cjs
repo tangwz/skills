@@ -36,6 +36,8 @@ function loadClip() {
             esModuleInterop: true,
           },
         });
+        // Shared templates live outside this package's dependency ancestry.
+        module.paths.unshift(path.join(__dirname, "node_modules"));
         module._compile(compiled.outputText, file);
       };
     }
@@ -882,6 +884,63 @@ test("YAML-shaped leading speech is preserved with BOM and CRLF variants", async
     }
   }
 });
+
+for (const name of ["leading-rule.md", "leading-mapping.md", "transcript.md"]) {
+  test(`leading blanks and br blocks preserve metadata and narration in ${name}`, async () => {
+    const spokenSections = (sections) =>
+      sections
+        .filter((section) => section.paragraphs.length > 0)
+        .map(({ title, paragraphs }) => ({ title, paragraphs }));
+    for (const newline of ["\n", "\r\n"]) {
+      const original = fixture(name).replaceAll("\n", newline);
+      const expected = await splitTranscript(original);
+      for (const whitespace of ["", "\n", " \n\t\n", "\uFEFF\n\n"]) {
+        for (const tag of ["", "<br>", "<BR />", "<br class='line'>"]) {
+          const prefix = (
+            whitespace + (tag ? `${tag}\n${tag}\n\n` : "")
+          ).replaceAll("\n", newline);
+          for (const suffix of ["", " ", "\t"]) {
+            const source = prefix + original.replace(/^---/, `---${suffix}`);
+            const { metadataEnd, sections } = await splitTranscript(source);
+            assert.equal(
+              metadataEnd,
+              expected.metadataEnd
+                ? prefix.length + suffix.length + expected.metadataEnd
+                : 0,
+            );
+            assert.deepEqual(
+              spokenSections(sections),
+              spokenSections(expected.sections),
+            );
+            for (const section of sections)
+              assert.equal(
+                section.raw,
+                source.slice(section.start, section.end),
+              );
+            if (name === "transcript.md") {
+              assert.deepEqual(
+                buildPlans(sections).map(
+                  ({ spokenText, cues, totalFrames }) => ({
+                    spokenText,
+                    cues,
+                    totalFrames,
+                  }),
+                ),
+                buildPlans(expected.sections).map(
+                  ({ spokenText, cues, totalFrames }) => ({
+                    spokenText,
+                    cues,
+                    totalFrames,
+                  }),
+                ),
+              );
+            }
+          }
+        }
+      }
+    }
+  });
+}
 
 test("unknown, mixed or non-string metadata fields cannot discard narration", async () => {
   for (const mapping of [
