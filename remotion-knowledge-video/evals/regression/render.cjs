@@ -235,13 +235,11 @@ async function main() {
     "--test-reporter=tap",
     testFile,
   ]);
-  fs.writeFileSync(path.join(directory, "tests.tap"), unitOutput);
   const typeCheckOutput = command(process.execPath, [
     require.resolve("typescript/bin/tsc"),
     "-p",
     path.join(__dirname, "tsconfig.json"),
   ]);
-  fs.writeFileSync(path.join(directory, "typecheck.log"), typeCheckOutput);
   const environment = {
     platform: process.platform,
     arch: process.arch,
@@ -479,6 +477,14 @@ async function main() {
       ),
     };
   }
+  const verificationDirectory = fs.mkdtempSync(
+    path.join(directory, "verification-"),
+  );
+  fs.writeFileSync(path.join(verificationDirectory, "tests.tap"), unitOutput);
+  fs.writeFileSync(
+    path.join(verificationDirectory, "typecheck.log"),
+    typeCheckOutput,
+  );
   const report = {
     generatedAt: new Date().toISOString(),
     kind: "deterministic fixture regression, not a with/without-skill comparison",
@@ -491,11 +497,11 @@ async function main() {
       count: Number(unitOutput.match(/# tests (\d+)/)[1]),
       passed: Number(unitOutput.match(/# pass (\d+)/)[1]),
       failed: Number(unitOutput.match(/# fail (\d+)/)[1]),
-      evidence: path.join(directory, "tests.tap"),
+      evidence: path.join(verificationDirectory, "tests.tap"),
     },
     typeCheck: {
       passed: true,
-      evidence: path.join(directory, "typecheck.log"),
+      evidence: path.join(verificationDirectory, "typecheck.log"),
     },
     environment,
     implementationHashes,
@@ -517,10 +523,9 @@ async function main() {
     audioTail,
     stills,
   };
-  fs.writeFileSync(
-    path.join(directory, "report.json"),
-    JSON.stringify(report, null, 2) + "\n",
-  );
+  const stagedReport = path.join(verificationDirectory, "report.json");
+  fs.writeFileSync(stagedReport, JSON.stringify(report, null, 2) + "\n");
+  fs.renameSync(stagedReport, path.join(directory, "report.json"));
   console.log(
     JSON.stringify(
       {
