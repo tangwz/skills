@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
 const { isDeepStrictEqual } = require("node:util");
+const { createHash } = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { bundle } = require("@remotion/bundler");
 const {
@@ -40,7 +41,10 @@ function fileMatches(file, digest) {
 }
 
 function command(program, args) {
-  const result = spawnSync(program, args, { encoding: "utf8" });
+  const result = spawnSync(program, args, {
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
   if (result.error || result.status !== 0) {
     throw new Error(result.error?.message ?? result.stderr);
   }
@@ -132,6 +136,35 @@ async function main() {
       `Dependency version mismatch: ${name}`,
     );
   }
+  const dependencyRoot = path.resolve(
+    path.dirname(require.resolve("remotion/package.json")),
+    "../..",
+  );
+  for (const name of Object.keys({
+    ...requiredDependencies,
+    ...require("./package.json").devDependencies,
+  })) {
+    assert.equal(
+      require.resolve(`${name}/package.json`),
+      path.join(dependencyRoot, "node_modules", name, "package.json"),
+      `Dependencies must resolve from one npm installation: ${name}`,
+    );
+  }
+  const installedPackages = JSON.parse(
+    command("npm", [
+      "query",
+      "*",
+      "--package-lock-only=false",
+      "--prefix",
+      dependencyRoot,
+    ]),
+  )
+    .filter((entry) => entry.location)
+    .map(({ location, name, version }) => [location, name, version])
+    .sort();
+  const dependencyTreeSha256 = createHash("sha256")
+    .update(JSON.stringify(installedPackages))
+    .digest("hex");
   const chineseFontData = fs.readFileSync(
     path.join(fontDirectory, "chinese.ttf"),
   );
@@ -173,6 +206,7 @@ async function main() {
     fontHashes,
     implementationHashes,
     dependencies,
+    dependencyTreeSha256,
   };
   const directory = resume
     ? path.resolve(outputTarget)
@@ -245,6 +279,7 @@ async function main() {
     arch: process.arch,
     node: process.version,
     dependencies,
+    dependencyTreeSha256,
     externalMediaTools: Object.fromEntries(
       ["ffmpeg", "ffprobe"].map((program) => [
         program,

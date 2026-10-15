@@ -4,7 +4,7 @@
 
 ## 环境与命令
 
-用 `package.json` 与完整 `package-lock.json` 安装；运行范围由 `engines.node` 声明为 Node 18.15+（18.x）或 20+。直接依赖相同不代表传递依赖相同，复用项目依赖时另记实际树。测试需要 FFmpeg/ffprobe（含 libx264）；渲染另需 Remotion 浏览器和本地端口权限。
+用 `package.json` 与完整 `package-lock.json` 安装；运行范围由 `engines.node` 声明为 Node 18.15+（18.x）或 20+。依赖必须来自同一 npm 安装目录；需要支持 `npm query` 的 npm，脚本按实际包位置、名称和版本记录整棵依赖树指纹，传递依赖变化时拒绝续跑。测试需要 FFmpeg/ffprobe（含 libx264）；渲染另需 Remotion 浏览器和本地端口权限。
 
 ```sh
 npm ci --prefix SKILL_PATH/evals/regression

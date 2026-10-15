@@ -610,7 +610,9 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
             throw new Error("Report publication failed");
           return rename(source, target);
         };
-        require("node:child_process").spawnSync = (program, args) => {
+        const spawn = require("node:child_process").spawnSync;
+        require("node:child_process").spawnSync = (program, args, options) => {
+          if (program === "npm") return spawn(program, args, options);
           if (process.env.KNOWLEDGE_PREPARE_SNAPSHOT) throw new Error("Snapshot prepared");
           if (program === process.execPath) return {status: 0, stdout: args[0] === "--test" ? "# tests 2\\n# pass 2\\n# fail 0\\n" : "Current type check passed\\n"};
           if (args[0] === "-version") return {status: 0, stdout: !process.env.KNOWLEDGE_PREVIOUS_TOOLS && program === ${JSON.stringify(changedTool)} ? "version B" : "version A"};
@@ -701,6 +703,7 @@ for (const changedTool of ["ffmpeg", "ffprobe"]) {
           arch: process.arch,
           node: process.version,
           dependencies: inputs.dependencies,
+          dependencyTreeSha256: inputs.dependencyTreeSha256,
           externalMediaTools: { ffmpeg: "version A", ffprobe: "version A" },
         },
         implementationHashes: inputs.implementationHashes,
@@ -862,6 +865,160 @@ test("a hard break inside a cue preserves its plan and duration", async () => {
   }
 });
 
+test("resume fingerprints actual external transitive versions and rejects mixed dependency roots", () => {
+  const parent = fs.mkdtempSync(
+    path.join(os.tmpdir(), "knowledge-dependency-tree-"),
+  );
+  try {
+    const skill = path.join(parent, "skill");
+    fs.cpSync(path.resolve(__dirname, "../.."), skill, {
+      recursive: true,
+      filter: (file) => path.basename(file) !== "node_modules",
+    });
+    const packageData = require("./package.json");
+    const installedRoot = path.join(parent, "installed");
+    fs.mkdirSync(installedRoot);
+    fs.writeFileSync(
+      path.join(installedRoot, "package.json"),
+      JSON.stringify(packageData),
+    );
+    const versions = {
+      ...packageData.dependencies,
+      ...packageData.devDependencies,
+      argparse: "2.0.1",
+    };
+    const packages = {};
+    for (const [name, version] of Object.entries(versions)) {
+      const directory = path.join(installedRoot, "node_modules", name);
+      fs.mkdirSync(directory, { recursive: true });
+      if (["prettier", "js-yaml", "argparse"].includes(name)) {
+        fs.cpSync(
+          path.dirname(require.resolve(`${name}/package.json`)),
+          directory,
+          { recursive: true },
+        );
+      } else {
+        // Rendering and typechecking are never reached in this snapshot test.
+        fs.writeFileSync(
+          path.join(directory, "package.json"),
+          JSON.stringify({ name, version }),
+        );
+        fs.writeFileSync(
+          path.join(directory, "index.js"),
+          "module.exports = {};\n",
+        );
+      }
+      const installed = JSON.parse(
+        fs.readFileSync(path.join(directory, "package.json"), "utf8"),
+      );
+      packages[`node_modules/${name}`] = {
+        version: installed.version,
+        dependencies: installed.dependencies,
+      };
+    }
+    const hiddenLock = path.join(
+      installedRoot,
+      "node_modules/.package-lock.json",
+    );
+    fs.writeFileSync(
+      hiddenLock,
+      JSON.stringify({ lockfileVersion: 3, packages }),
+    );
+    const lockDigest = sha256(hiddenLock);
+    const fonts = path.join(parent, "fonts");
+    fs.mkdirSync(fonts);
+    for (const file of ["title.woff2", "body.woff2", "mono.woff2"])
+      fs.writeFileSync(path.join(fonts, file), "test font bytes");
+    fs.writeFileSync(
+      path.join(fonts, "chinese.ttf"),
+      Buffer.from([0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    );
+    const preload = path.join(parent, "stop-after-snapshot.cjs");
+    fs.writeFileSync(
+      preload,
+      `const child = require("node:child_process");
+      const spawn = child.spawnSync;
+      child.spawnSync = (program, args, options) => {
+        if (program === "npm") return spawn(program, args, options);
+        throw new Error("Reached test execution");
+      };`,
+    );
+    const run = (args) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--require",
+          preload,
+          path.join(skill, "evals/regression/render.cjs"),
+          ...args,
+          fonts,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          env: {
+            ...process.env,
+            NODE_PATH: path.join(installedRoot, "node_modules"),
+          },
+        },
+      );
+    const outputs = path.join(parent, "outputs");
+    assert.match(run([outputs]).stderr, /Reached test execution/);
+    const directory = path.join(outputs, fs.readdirSync(outputs)[0]);
+    fs.writeFileSync(
+      path.join(directory, "manifest.json"),
+      JSON.stringify({ clips: {} }),
+    );
+    const snapshot = () =>
+      [
+        ...fs.readdirSync(directory).filter((name) => name !== "public"),
+        ...fs
+          .readdirSync(path.join(directory, "public"))
+          .map((name) => path.join("public", name)),
+      ].map((name) => {
+        const file = path.join(directory, name);
+        return [name, sha256(file), fs.statSync(file).mtimeMs];
+      });
+    const before = snapshot();
+    assert.match(run(["--resume", directory]).stderr, /Reached test execution/);
+    const transitiveFile = path.join(
+      installedRoot,
+      "node_modules/argparse/package.json",
+    );
+    const original = fs.readFileSync(transitiveFile, "utf8");
+    const directoryMtime = fs.statSync(path.dirname(transitiveFile)).mtimeMs;
+    fs.writeFileSync(
+      transitiveFile,
+      JSON.stringify({ ...JSON.parse(original), version: "2.0.2" }),
+    );
+    assert.equal(
+      fs.statSync(path.dirname(transitiveFile)).mtimeMs,
+      directoryMtime,
+    );
+    assert.equal(sha256(hiddenLock), lockDigest);
+    const changed = run(["--resume", directory]);
+    assert.equal(changed.status, 1, changed.stderr);
+    assert.match(changed.stderr, /Resume inputs changed/);
+    assert.deepEqual(snapshot(), before);
+    fs.writeFileSync(transitiveFile, original);
+    assert.match(run(["--resume", directory]).stderr, /Reached test execution/);
+    const mixed = path.join(skill, "evals/regression/node_modules/js-yaml");
+    fs.mkdirSync(mixed, { recursive: true });
+    fs.cpSync(path.join(installedRoot, "node_modules/js-yaml"), mixed, {
+      recursive: true,
+    });
+    const mixedResume = run(["--resume", directory]);
+    assert.equal(mixedResume.status, 1, mixedResume.stderr);
+    assert.match(
+      mixedResume.stderr,
+      /Dependencies must resolve from one npm installation/,
+    );
+    assert.deepEqual(snapshot(), before);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 for (const invalid of ["missing", "changed"]) {
   test(`the renderer refuses a ${invalid} resume snapshot before changing files`, () => {
     const parent = fs.mkdtempSync(
@@ -931,7 +1088,12 @@ for (const invalid of ["missing", "changed"]) {
       const preload = path.join(parent, "stop-after-snapshot.cjs");
       fs.writeFileSync(
         preload,
-        'require("node:child_process").spawnSync = () => { throw new Error("Reached test execution"); };',
+        `const child = require("node:child_process");
+        const spawn = child.spawnSync;
+        child.spawnSync = (program, args, options) => {
+          if (program === "npm") return spawn(program, args, options);
+          throw new Error("Reached test execution");
+        };`,
       );
       const run = (args) =>
         spawnSync(
