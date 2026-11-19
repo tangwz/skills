@@ -63,6 +63,46 @@ class CleanupTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             cleanup.move_to_trash(home / "Documents", set(), claude, batch)
 
+    @unittest.skipIf(sys.platform == "win32", "Requires POSIX symlinks")
+    def test_deletion_gate_checks_the_resolved_parent(self):
+        home = self.home()
+        claude, batch = home / ".claude", home / ".Trash/run"
+        protected = claude / "projects"
+        (protected / "entry").mkdir(parents=True)
+
+        with mock.patch.object(cleanup.shutil, "move") as move:
+            for index, parent in enumerate((protected, protected.with_name("Projects"))):
+                if not parent.is_dir():
+                    continue
+                with self.subTest(parent=parent):
+                    alias = home / f"linked-directory-{index}"
+                    alias.symlink_to(parent, target_is_directory=True)
+                    target = alias / "entry"
+                    with self.assertRaises(RuntimeError):
+                        cleanup.move_to_trash(target, {target}, claude, batch)
+            move.assert_not_called()
+        self.assertFalse(batch.exists())
+
+    @unittest.skipIf(sys.platform == "win32", "Requires POSIX symlinks")
+    def test_trash_moves_a_leaf_symlink_without_following_it(self):
+        home = self.home()
+        claude, batch = home / ".claude", home / ".Trash/run"
+        protected = claude / "projects"
+        protected.mkdir()
+        other = home / "other"
+        other.mkdir()
+        parent = home / "linked-directory"
+        parent.symlink_to(other, target_is_directory=True)
+        target = parent / "cache"
+        target.symlink_to(protected, target_is_directory=True)
+
+        destination = cleanup.move_to_trash(target, {target}, claude, batch)
+
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(destination.readlink(), protected)
+        self.assertFalse(target.is_symlink())
+        self.assertTrue(protected.is_dir())
+
     def test_safe_cache_moves_without_touching_project(self):
         home = self.home()
         project = home / ".claude/projects/session.jsonl"
@@ -371,6 +411,30 @@ class ContextSlimTests(unittest.TestCase):
         self.assertNotIn("ENABLE_LSP_TOOL", env)
         self.assertNotIn("CLAUDECODE", env)
         self.assertEqual((env["CLAUDE_CODE_SIMPLE"], env["HTTPS_PROXY"], env["CLAUDE_CODE_ENTRYPOINT"]), ("0", "http://p", "claude-desktop"))
+
+    def test_terminal_session_rereads_simple_mode_after_settings_changes(self):
+        home = self.home()
+        settings_path = home / ".claude/settings.json"
+        enabled = {"env": {"CLAUDE_CODE_SIMPLE": "1"}}
+        disabled = {"env": {}}
+        cleanup.write_json(settings_path, enabled)
+        cleanup.backup_settings(home)
+        inherited = {
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+            "CLAUDE_CODE_SIMPLE": "1",
+        }
+        with (
+            mock.patch.dict(os.environ, inherited),
+            mock.patch.object(pathlib.Path, "home", return_value=home),
+            mock.patch.object(cleanup, "claude_exe", return_value="claude"),
+            mock.patch.object(cleanup.subprocess, "run") as run,
+        ):
+            self.assertTrue(cleanup.simple_mode(enabled))
+            cleanup.write_json(settings_path, disabled)
+            cleanup.run_claude(["/context"], str(home))
+            self.assertNotIn("CLAUDE_CODE_SIMPLE", run.call_args.kwargs["env"])
+            self.assertFalse(cleanup.simple_mode(disabled))
 
     def test_measure_labels_environment_and_simple_mode(self):
         home = self.home()

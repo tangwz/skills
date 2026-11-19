@@ -183,16 +183,42 @@ def create_backup(home: pathlib.Path) -> pathlib.Path:
     return final
 
 
+def path_entry_identity(path: pathlib.Path) -> pathlib.Path | tuple[int, int]:
+    """Identify entries by inode so case aliases match and leaf symlinks stay distinct."""
+    try:
+        info = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return path
+    return info.st_dev, info.st_ino
+
+
 def move_to_trash(target: pathlib.Path, allowed: set[pathlib.Path], claude: pathlib.Path, batch: pathlib.Path) -> pathlib.Path:
-    absolute = target.absolute()
-    protected = {claude / name for name in PROTECTED}
-    if absolute == claude.absolute() or any(absolute == p.absolute() or p.absolute() in absolute.parents for p in protected):
-        raise RuntimeError(f"拒绝触碰受保护路径：{target}")
-    if absolute not in {path.absolute() for path in allowed}:
+    if target.absolute() not in {path.absolute() for path in allowed}:
         raise RuntimeError(f"目标不在删除白名单：{target}")
+
+    # Moving a leaf symlink must leave its referent in place.
+    source = target.parent.resolve(strict=True) / target.name
+    claude_entry = claude.parent.resolve() / claude.name
+    claude_root = claude_entry.resolve()
+    protected = {claude_root / name for name in PROTECTED}
+    protected |= {path.resolve() for path in protected if path.is_symlink()}
+
+    source_identity = path_entry_identity(source)
+    source_chain = {path_entry_identity(parent) for parent in source.parents}
+    source_chain.add(source_identity)
+    claude_locations = {claude_entry, claude_root}
+    protected_ancestors = claude_locations | {
+        parent for path in protected | claude_locations for parent in path.parents
+    }
+    if (
+        any(path_entry_identity(path) in source_chain for path in protected)
+        or any(path_entry_identity(path) == source_identity for path in protected_ancestors)
+    ):
+        raise RuntimeError(f"拒绝触碰受保护路径：{target}")
+
     batch.mkdir(parents=True, exist_ok=True)
     destination = batch / f"{len(list(batch.iterdir())):02d}-{target.name}"
-    shutil.move(str(target), str(destination))
+    shutil.move(str(source), str(destination))
     return destination
 
 
@@ -510,29 +536,35 @@ def claude_exe() -> str:
     raise FileNotFoundError("找不到 claude 命令（PATH、~/.local/bin、~/.claude/local 都没有）")
 
 
-def simple_mode(settings_data: dict) -> bool:
-    """settings.json 里开了最小模式、而且当前环境没有另行指定（桌面版 app 会把 CLAUDE_CODE_SIMPLE 设成 0）。"""
-    value = settings_data.get("env", {}).get("CLAUDE_CODE_SIMPLE") if isinstance(settings_data.get("env"), dict) else None
-    return str(value).lower() in {"1", "true", "yes", "on"} and "CLAUDE_CODE_SIMPLE" not in os.environ
+def in_desktop_session() -> bool:
+    return "CLAUDECODE" in os.environ and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "claude-desktop"
 
 
 def claude_env() -> dict[str, str]:
-    """子进程的环境变量。去掉 CLAUDECODE，否则在 Claude Code 里起的子进程会被嵌套保护拦下。
-    在 Claude Code 会话里跑时，环境里还带着这个会话启动时套用的 settings env：settings 里改过的值会覆盖它，
-    但用户之后删掉的键会带着旧值留下来。所以把当前 settings 和最近一份备份里出现过的键都去掉，让子进程从文件重新读。
-    CLAUDE_CODE_SIMPLE 不去掉：桌面版 app 自己设成 0，settings 里的值在桌面版本来就不生效。"""
+    """Drop the nesting marker and let the child reread settings-derived variables.
+
+    The latest settings backup identifies keys that may have been deleted.
+    Preserve the simple-mode override injected by the Desktop app.
+    """
     env = {key: value for key, value in os.environ.items() if key != "CLAUDECODE"}
     if "CLAUDECODE" not in os.environ:
         return env
+    preserved = {"CLAUDE_CODE_SIMPLE"} if in_desktop_session() else set()
     path = config_dir(pathlib.Path.home()) / "settings.json"
     for source in [path, *sorted(path.parent.glob("settings.json.bak-*"))[-1:]]:
         try:
             keys = set(settings_env(read_json(source, {})))
         except (OSError, ValueError):
             continue
-        for key in keys - {"CLAUDE_CODE_SIMPLE"}:
+        for key in keys - preserved:
             env.pop(key, None)
     return env
+
+
+def simple_mode(settings_data: dict) -> bool:
+    env = settings_data.get("env")
+    value = env.get("CLAUDE_CODE_SIMPLE") if isinstance(env, dict) else None
+    return str(value).lower() in {"1", "true", "yes", "on"} and "CLAUDE_CODE_SIMPLE" not in claude_env()
 
 
 def run_claude(args: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
@@ -573,7 +605,7 @@ def backup_settings(home: pathlib.Path) -> pathlib.Path | None:
 def measure_report(home: pathlib.Path, settings_data: dict, usage: dict | None) -> list[str]:
     # 在哪个环境里跑就按哪个环境测：桌面版会话里起的子进程带着 app 注入的环境变量，工具和终端版不一样；
     # 账号同步的 skill 也只在桌面版里挂上
-    desktop = "CLAUDECODE" in os.environ and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "claude-desktop"
+    desktop = in_desktop_session()
     plugin_dir, _ = desktop_skill_plugin(home)
     base = ["--plugin-dir", str(plugin_dir)] if plugin_dir and desktop else []
     permissions = settings_data.get("permissions") if isinstance(settings_data.get("permissions"), dict) else {}
